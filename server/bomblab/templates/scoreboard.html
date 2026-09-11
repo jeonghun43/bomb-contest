@@ -5,35 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bomb Lab Scoreboard</title>
 <style>
-  /* Deliberately plain, light, monospace - the classic CMU/IIT look. */
+  /* Classic CMU/IIT bomblab scoreboard: light-blue table, white gridlines,
+     darker-blue header, black sans-serif text. */
   html { color-scheme: light; }
   body {
     background: #ffffff;
     color: #000000;
-    font-family: "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
-    font-size: 14px;
+    font-family: Arial, Helvetica, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+    font-size: 15px;
     margin: 24px;
   }
-  h1 { font-size: 22px; margin: 0 0 4px; font-weight: bold; }
-  .rule { color: #000; margin: 2px 0 12px; white-space: nowrap; overflow: hidden; }
-  p.note { max-width: 70ch; line-height: 1.4; }
-  .invalid-word { color: #b00000; font-weight: bold; }
-  .updated { margin: 10px 0 16px; }
-  .frozen { color: #b00000; font-weight: bold; }
-  table { border-collapse: collapse; }
-  th, td { padding: 2px 14px 2px 0; text-align: left; white-space: nowrap; }
-  th { border-bottom: 1px solid #000; }
-  td.num, th.num { text-align: right; padding-right: 22px; }
-  tr.me td { background: #fff7cc; }
-  .status-valid { color: #006000; }
-  .status-invalid { color: #b00000; font-weight: bold; }
-  .summary { margin-top: 18px; max-width: 90ch; line-height: 1.5; }
+  h1 { font-size: 28px; margin: 0 0 14px; font-weight: bold; }
+  p.note { max-width: 62ch; line-height: 1.5; margin: 0 0 14px; }
+  .invalid-word { color: #d00000; font-weight: bold; }
+  .updated { margin: 0 0 16px; }
+  .frozen { color: #d00000; font-weight: bold; }
+
+  table { border-collapse: separate; border-spacing: 2px; background: #ffffff; }
+  th, td { padding: 6px 16px; text-align: center; white-space: nowrap; }
+  th { background: #a9c1e3; font-weight: bold; }   /* header blue  */
+  td { background: #d7e3f4; }                        /* data blue    */
+  th.name, td.name { text-align: left; }
+  .status-invalid { color: #d00000; font-weight: bold; }
+
+  .summary { margin-top: 16px; max-width: 92ch; line-height: 1.6; }
   .summary b { font-weight: bold; }
 </style>
 </head>
 <body>
 <h1>Bomb Lab Scoreboard</h1>
-<div class="rule" id="rule">--------------------------------------------------------------------------</div>
 
 <p class="note">
 This page contains the latest information that we have received from the bombs.
@@ -50,12 +50,12 @@ explosion).
 <table>
   <thead>
     <tr>
-      <th class="num">#</th>
-      <th>Bomb</th>
-      <th>Submission date</th>
-      <th class="num">Phases&nbsp;defused</th>
-      <th class="num">Explosions</th>
-      <th class="num">Score</th>
+      <th>#</th>
+      <th class="name">Bomb&nbsp;number</th>
+      <th>Submission&nbsp;date</th>
+      <th>Phases&nbsp;defused</th>
+      <th>Explosions</th>
+      <th>Score</th>
       <th>Status</th>
     </tr>
   </thead>
@@ -89,15 +89,14 @@ async function refresh() {
 
   document.getElementById('rows').innerHTML = d.rows.map(function(r){
     const st = r.status === 'invalid'
-      ? '<span class="status-invalid">invalid</span>'
-      : '<span class="status-valid">valid</span>';
+      ? '<span class="status-invalid">invalid</span>' : 'valid';
     return '<tr>'
-      + '<td class="num">' + r.rank + '</td>'
-      + '<td>' + esc(r.username) + '</td>'
+      + '<td>' + r.rank + '</td>'
+      + '<td class="name">' + esc(r.username) + '</td>'
       + '<td>' + esc(r.submission) + '</td>'
-      + '<td class="num">' + r.pcount + '</td>'
-      + '<td class="num">' + r.explosions + '</td>'
-      + '<td class="num">' + r.score + '</td>'
+      + '<td>' + r.pcount + '</td>'
+      + '<td>' + r.explosions + '</td>'
+      + '<td>' + r.score + '</td>'
       + '<td>' + st + '</td>'
       + '</tr>';
   }).join('');

@@ -92,17 +92,29 @@ echo "== 4. systemd 유닛 =="
 cp "$DEST"/server/systemd/*.service "$DEST"/server/systemd/*.timer \
     /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now bomblab-reportd.service >/dev/null 2>&1
-systemctl enable --now bomblab-web.service >/dev/null 2>&1
-systemctl enable --now bomblab-scheduler.timer >/dev/null 2>&1
-echo "   reportd / web / scheduler.timer 활성화"
+systemctl enable bomblab-reportd.service >/dev/null 2>&1
+systemctl enable bomblab-web.service >/dev/null 2>&1
+systemctl enable bomblab-scheduler.timer >/dev/null 2>&1
+# restart (not just start) so re-running install.sh after a code update
+# actually reloads the new Python code into the running daemons.
+systemctl restart bomblab-reportd.service
+systemctl restart bomblab-web.service
+systemctl start bomblab-scheduler.timer >/dev/null 2>&1
+echo "   reportd / web / scheduler.timer 활성화·재시작"
 
 echo "== 5. nginx =="
-cp "$DEST/server/nginx/bomblab.conf" /etc/nginx/sites-available/bomblab
+# Only install the site config on first setup. certbot edits this file to add
+# the HTTPS (443) server block, so re-running install.sh must NOT clobber it.
+if [ ! -f /etc/nginx/sites-available/bomblab ]; then
+    cp "$DEST/server/nginx/bomblab.conf" /etc/nginx/sites-available/bomblab
+    echo "   nginx 사이트 설정 생성"
+else
+    echo "   기존 nginx 사이트 설정 유지 (certbot HTTPS 변경 보존)"
+fi
 ln -sf /etc/nginx/sites-available/bomblab /etc/nginx/sites-enabled/bomblab
 rm -f /etc/nginx/sites-enabled/default
 nginx -t >/dev/null 2>&1 && systemctl reload nginx
-echo "   사이트 활성화, HTTPS는 certbot으로 별도 설정"
+echo "   HTTPS는 certbot으로 설정: sudo certbot --nginx -d <도메인>"
 
 echo "== 6. 참가자 격리 =="
 cp "$DEST/server/etc/sshd_config.d/bomblab.conf" /etc/ssh/sshd_config.d/
