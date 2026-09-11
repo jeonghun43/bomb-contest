@@ -30,7 +30,9 @@ import string
 import subprocess
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# realpath (not abspath) so this resolves correctly when invoked through the
+# /usr/local/sbin/bomblabctl symlink that install.sh creates.
+_HERE = os.path.dirname(os.path.realpath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))  # repo root (…/server/bin → …)
 sys.path.insert(0, os.path.join(_ROOT, "server"))
 sys.path.insert(0, os.path.join(_ROOT, "tools"))
