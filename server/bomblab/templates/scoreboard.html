@@ -1,81 +1,117 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bomb Lab 리더보드</title>
+<title>Bomb Lab Scoreboard</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, sans-serif; margin: 0; background:#0f1220; color:#e8e8f0; }
-  header { padding: 16px 20px; background:#171a2e; border-bottom:1px solid #2a2f4a; }
-  h1 { margin:0; font-size:20px; }
-  .banner { margin-top:8px; padding:6px 10px; border-radius:6px; font-size:13px; display:inline-block; }
-  .frozen { background:#3a2d0a; color:#ffd479; }
-  .running { background:#0c331f; color:#7ee2a8; }
-  .before, .ended { background:#33121a; color:#ff9db0; }
-  table { border-collapse: collapse; width:100%; }
-  th, td { padding:8px 10px; text-align:center; border-bottom:1px solid #23273f; font-variant-numeric: tabular-nums; }
-  th { position:sticky; top:0; background:#171a2e; font-size:12px; letter-spacing:.04em; }
-  td.name { text-align:left; font-weight:600; }
-  .rank { color:#8a90b8; width:44px; }
-  .cell { width:34px; }
-  .ok { color:#7ee2a8; font-weight:700; }
-  .no { color:#3b3f5c; }
-  .sec.ok { color:#ffd479; }
-  .score { font-weight:700; font-size:15px; }
-  .boom { color:#ff9db0; }
-  #updated { color:#6b7099; font-size:12px; padding:10px 20px; }
+  /* Deliberately plain, light, monospace - the classic CMU/IIT look. */
+  html { color-scheme: light; }
+  body {
+    background: #ffffff;
+    color: #000000;
+    font-family: "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
+    font-size: 14px;
+    margin: 24px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: bold; }
+  .rule { color: #000; margin: 2px 0 12px; white-space: nowrap; overflow: hidden; }
+  p.note { max-width: 70ch; line-height: 1.4; }
+  .invalid-word { color: #b00000; font-weight: bold; }
+  .updated { margin: 10px 0 16px; }
+  .frozen { color: #b00000; font-weight: bold; }
+  table { border-collapse: collapse; }
+  th, td { padding: 2px 14px 2px 0; text-align: left; white-space: nowrap; }
+  th { border-bottom: 1px solid #000; }
+  td.num, th.num { text-align: right; padding-right: 22px; }
+  tr.me td { background: #fff7cc; }
+  .status-valid { color: #006000; }
+  .status-invalid { color: #b00000; font-weight: bold; }
+  .summary { margin-top: 18px; max-width: 90ch; line-height: 1.5; }
+  .summary b { font-weight: bold; }
 </style>
 </head>
 <body>
-<header>
-  <h1 id="title">Bomb Lab</h1>
-  <div id="banner"></div>
-</header>
+<h1>Bomb Lab Scoreboard</h1>
+<div class="rule" id="rule">--------------------------------------------------------------------------</div>
+
+<p class="note">
+This page contains the latest information that we have received from the bombs.
+If a solution is marked <span class="invalid-word">invalid</span>, it means the
+bomb reported a solution that did not actually defuse it (and it counts as an
+explosion).
+</p>
+
+<div class="updated">
+  Last updated: <span id="updated">-</span> (updated every 30 secs)
+  <span id="freeze"></span>
+</div>
+
 <table>
   <thead>
     <tr>
-      <th class="rank">#</th><th style="text-align:left">참가자</th>
-      <th class="cell">1</th><th class="cell">2</th><th class="cell">3</th>
-      <th class="cell">4</th><th class="cell">5</th><th class="cell">6</th>
-      <th class="cell">★</th><th>💥</th><th>점수</th>
+      <th class="num">#</th>
+      <th>Bomb</th>
+      <th>Submission date</th>
+      <th class="num">Phases&nbsp;defused</th>
+      <th class="num">Explosions</th>
+      <th class="num">Score</th>
+      <th>Status</th>
     </tr>
   </thead>
   <tbody id="rows"></tbody>
 </table>
-<div id="updated"></div>
+
+<div class="summary" id="summary"></div>
+
 <script>
-function cell(t, secret) {
-  if (t) return '<td class="cell ' + (secret ? 'sec ok' : 'ok') + '" title="' + t + '">●</td>';
-  return '<td class="cell no">·</td>';
-}
+function esc(s){ return String(s).replace(/[&<>]/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
+
 async function refresh() {
+  let d;
   try {
-    const r = await fetch('/api/scoreboard');
-    const d = await r.json();
-    document.getElementById('title').textContent = d.contest;
-    const b = document.getElementById('banner');
-    const labels = {running:'진행 중', frozen:'❄ 리더보드 고정됨 (종료 시 최종 공개)', before:'시작 전', ended:'종료'};
-    b.className = 'banner ' + d.state;
-    b.textContent = labels[d.state] || d.state;
-    const tb = document.getElementById('rows');
-    tb.innerHTML = d.rows.map(function(r){
-      let c = '';
-      for (let p=1;p<=6;p++) c += cell(r.phases[p], false);
-      c += cell(r.phases['7'], true);
-      return '<tr><td class="rank">'+r.rank+'</td>'
-        + '<td class="name">'+r.nickname+'</td>'
-        + c
-        + '<td class="boom">'+(r.explosions||'')+'</td>'
-        + '<td class="score">'+r.score+'</td></tr>';
-    }).join('');
-    document.getElementById('updated').textContent = '갱신: ' + new Date().toLocaleTimeString();
-  } catch(e) {
-    document.getElementById('updated').textContent = '서버 연결 실패, 재시도 중...';
+    d = await (await fetch('/api/scoreboard')).json();
+  } catch (e) {
+    document.getElementById('updated').textContent = '(server unreachable, retrying)';
+    return;
   }
+  document.title = d.contest + ' - Bomb Lab Scoreboard';
+  document.querySelector('h1').textContent = d.contest;
+  document.getElementById('updated').textContent = d.updated;
+
+  const fz = document.getElementById('freeze');
+  fz.className = d.frozen ? 'frozen' : '';
+  fz.textContent = d.frozen
+    ? '   [ SCOREBOARD FROZEN - final results shown after the contest ]'
+    : (d.state === 'before' ? '   [ not started ]'
+       : d.state === 'ended' ? '   [ contest ended ]' : '');
+
+  document.getElementById('rows').innerHTML = d.rows.map(function(r){
+    const st = r.status === 'invalid'
+      ? '<span class="status-invalid">invalid</span>'
+      : '<span class="status-valid">valid</span>';
+    return '<tr>'
+      + '<td class="num">' + r.rank + '</td>'
+      + '<td>' + esc(r.username) + '</td>'
+      + '<td>' + esc(r.submission) + '</td>'
+      + '<td class="num">' + r.pcount + '</td>'
+      + '<td class="num">' + r.explosions + '</td>'
+      + '<td class="num">' + r.score + '</td>'
+      + '<td>' + st + '</td>'
+      + '</tr>';
+  }).join('');
+
+  const s = d.summary || {};
+  let parts = '';
+  for (let p = 1; p <= 7; p++) parts += ' [' + p + ':' + (s[p] || 0) + ']';
+  document.getElementById('summary').innerHTML =
+    '<b>Summary</b> [phase:cnt]' + parts
+    + '&nbsp;&nbsp; total defused = ' + d.fully + '/' + d.total
+    + '  (phase 7 = hidden stage)';
 }
 refresh();
-setInterval(refresh, 10000);
+setInterval(refresh, 30000);
 </script>
 </body>
 </html>

@@ -12,6 +12,7 @@ import base64
 import datetime
 import json
 import os
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import config, scoring
@@ -31,6 +32,14 @@ def _iso(ts):
         return None
     return datetime.datetime.fromtimestamp(
         ts, datetime.timezone.utc).astimezone().strftime("%H:%M:%S")
+
+
+def _asctime(ts):
+    # "Sat Aug 29 14:01:31 2026" in the server's local time, matching the
+    # classic CMU bomblab scoreboard.
+    if not ts:
+        return "-"
+    return time.strftime("%a %b %e %H:%M:%S %Y", time.localtime(ts))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -76,20 +85,51 @@ class Handler(BaseHTTPRequestHandler):
             override = db.get_setting("override", "auto")
             state = cfg.state(override)
             cut = scoring.cutoff_for(cfg, override, public=public)
-            rows = scoring.score_rows(cfg, db.all_users(), db.all_events(), cut)
+            users = db.all_users()
+            events = db.all_events()
+            rows = scoring.score_rows(cfg, users, events, cut)
         finally:
             db.close()
+
+        # Per-user last scoring event within the cutoff: its time drives the
+        # "Submission date" column and its kind drives Status (valid/invalid).
+        last = {}
+        for e in events:
+            if e["late"] or e["created_at"] > cut:
+                continue
+            if e["kind"] not in ("defused", "invalid", "exploded"):
+                continue
+            u = e["username"]
+            if u not in last or e["created_at"] > last[u][0]:
+                last[u] = (e["created_at"], e["kind"])
+
         out = []
+        summary = {p: 0 for p in range(1, 8)}
+        fully = 0
         for r in rows:
+            for p in r["phases"]:
+                summary[p] += 1
+            if all(p in r["phases"] for p in range(1, 7)):
+                fully += 1
+            lt, lk = last.get(r["username"], (0, ""))
             out.append({
                 "rank": r["rank"],
                 "nickname": r["nickname"],
+                "username": r["username"],   # the "bomb number", e.g. bomb07
+                # dict form for the admin per-phase view
                 "phases": {str(p): _iso(ts) for p, ts in r["phases"].items()},
+                # scalar forms for the CMU-style public board
+                "pcount": len(r["phases"]),
+                "submission": _asctime(lt),
+                "status": "invalid" if lk == "invalid" else "valid",
                 "explosions": r["explosions"],
                 "score": r["score"],
             })
         return {"state": state, "frozen": state == config.FROZEN,
-                "public": public, "contest": cfg.name, "rows": out}
+                "public": public, "contest": cfg.name,
+                "updated": _asctime(time.time()),
+                "summary": {str(p): summary[p] for p in range(1, 8)},
+                "fully": fully, "total": len(users), "rows": out}
 
     def _feed(self, public, admin):
         cfg = self.server.cfg
