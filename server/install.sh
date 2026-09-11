@@ -20,10 +20,33 @@ fi
 SRC="$(cd "$(dirname "$0")/.." && pwd)"   # repo root
 DEST=/opt/bomblab
 
+# A freshly booted cloud instance runs unattended-upgrades / cloud-init, which
+# holds the apt lock. Wait for it to finish instead of failing or hanging
+# silently. (If `fuser` isn't installed the loop just exits and we proceed;
+# the DPkg::Lock::Timeout below is the belt-and-suspenders fallback.)
+wait_apt() {
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
+                /var/lib/apt/lists/lock /var/cache/apt/archives/lock \
+                >/dev/null 2>&1; do
+        [ "$waited" -eq 0 ] && \
+            echo "   다른 apt 작업(부팅 직후 자동 업데이트 등)이 끝나길 기다리는 중..."
+        waited=$((waited + 1))
+        sleep 3
+    done
+}
+
+# Ask apt itself to wait up to 10 min for the lock, and keep normal output so
+# download progress is visible.
+APT_OPTS="-o DPkg::Lock::Timeout=600"
+
 echo "== 1. 패키지 설치 =="
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq build-essential gdb python3 nginx sqlite3 rsync fail2ban >/dev/null
+wait_apt
+apt-get $APT_OPTS update
+wait_apt
+apt-get $APT_OPTS install -y \
+    build-essential gdb python3 nginx sqlite3 rsync fail2ban
 echo "   build-essential gdb python3 nginx sqlite3 rsync fail2ban"
 # The box is internet-exposed with password logins, so throttle SSH brute force.
 cat > /etc/fail2ban/jail.d/bomblab.conf <<'F2B'
