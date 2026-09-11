@@ -1,0 +1,22 @@
+[Unit]
+Description=Bomb Lab scoreboard web server
+After=network.target bomblab-reportd.service
+
+[Service]
+User=bomblab
+Group=bomblab
+WorkingDirectory=/opt/bomblab
+Environment=PYTHONPATH=/opt/bomblab/server:/opt/bomblab/tools
+Environment=BOMBLAB_CONFIG=/etc/bomblab/bomblab.ini
+ExecStart=/usr/bin/python3 -m bomblab.web
+Restart=always
+RestartSec=1
+ProtectSystem=strict
+ProtectHome=true
+# SQLite opens the DB with mode=ro (read-only at the query layer), but a
+# WAL database needs to map the -shm file, so the path must be writable here.
+ReadWritePaths=/var/lib/bomblab
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

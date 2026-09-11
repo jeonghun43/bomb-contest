@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Bomb Lab scheduler tick every 15 seconds
+
+[Timer]
+OnBootSec=15
+OnUnitActiveSec=15
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

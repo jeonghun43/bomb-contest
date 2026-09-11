@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bomb Lab 관리자</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; margin:0; background:#0f1220; color:#e8e8f0; }
+  header { padding:14px 20px; background:#171a2e; border-bottom:1px solid #2a2f4a; }
+  h1 { margin:0; font-size:18px; }
+  .wrap { display:grid; grid-template-columns: 1fr 1fr; gap:16px; padding:16px; }
+  h2 { font-size:14px; color:#8a90b8; margin:0 0 8px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th,td { padding:5px 8px; border-bottom:1px solid #23273f; text-align:center; font-variant-numeric:tabular-nums; }
+  th { background:#171a2e; position:sticky; top:0; }
+  td.name,td.in { text-align:left; }
+  .ok{color:#7ee2a8}.sec{color:#ffd479}.no{color:#3b3f5c}
+  .defused{color:#7ee2a8}.exploded{color:#ff9db0}.invalid{color:#ff6b8a;font-weight:700}
+  code{color:#cbd0ff}
+  #feed{max-height:80vh;overflow:auto}
+  .state{font-size:13px;color:#ffd479}
+</style>
+</head>
+<body>
+<header>
+  <h1>Bomb Lab 관리자 <span class="state" id="state"></span></h1>
+</header>
+<div class="wrap">
+  <div>
+    <h2>실시간 순위 (프리즈 무시)</h2>
+    <table>
+      <thead><tr><th>#</th><th style="text-align:left">참가자</th>
+        <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>★</th><th>💥</th><th>점수</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div>
+    <h2>이벤트 (입력 원문 포함)</h2>
+    <div id="feed"><table><tbody id="events"></tbody></table></div>
+  </div>
+</div>
+<script>
+function cell(t, sec){ return t ? '<td class="'+(sec?'sec':'ok')+'" title="'+t+'">●</td>' : '<td class="no">·</td>'; }
+async function refresh(){
+  const s = await (await fetch('/api/admin/scoreboard')).json();
+  document.getElementById('state').textContent = '· ' + s.state;
+  document.getElementById('rows').innerHTML = s.rows.map(function(r){
+    let c=''; for(let p=1;p<=6;p++) c+=cell(r.phases[p],false); c+=cell(r.phases['7'],true);
+    return '<tr><td>'+r.rank+'</td><td class="name">'+r.nickname+'</td>'+c
+      +'<td class="exploded">'+(r.explosions||'')+'</td><td><b>'+r.score+'</b></td></tr>';
+  }).join('');
+  const f = await (await fetch('/api/admin/feed')).json();
+  document.getElementById('events').innerHTML = f.events.map(function(e){
+    const kls = e.kind;
+    const inp = e.input===null?'':('<code>'+e.input.replace(/</g,'&lt;')+'</code>');
+    return '<tr><td>'+e.time+'</td><td class="name">'+e.nickname+' ('+e.username+')</td>'
+      +'<td>P'+e.phase+'</td><td class="'+kls+'">'+e.kind+(e.late?' ⏱':'')+'</td>'
+      +'<td class="in">'+inp+'</td></tr>';
+  }).join('');
+}
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>

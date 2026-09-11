@@ -1,0 +1,22 @@
+[Unit]
+Description=Bomb Lab record daemon (Unix socket)
+After=network.target
+
+[Service]
+User=bomblab
+Group=bomblab
+WorkingDirectory=/opt/bomblab
+Environment=PYTHONPATH=/opt/bomblab/server:/opt/bomblab/tools
+Environment=BOMBLAB_CONFIG=/etc/bomblab/bomblab.ini
+ExecStart=/usr/bin/python3 -m bomblab.reportd
+Restart=always
+RestartSec=1
+RuntimeDirectory=bomblab
+RuntimeDirectoryMode=0755
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bomblab /run/bomblab
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
