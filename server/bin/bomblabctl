@@ -5,6 +5,9 @@ bomblabctl - Operator command line for the Bomb Lab practice server.
     bomblabctl provision roster.csv       accounts + every student's bombs
     bomblabctl reissue <user> <bomb|practice|d0..d9>
                                           build a fresh bomb (scored one too)
+    bomblabctl solution <user> <bomb|practice|d0..d9>
+                                          that student's answers, walkthrough,
+                                          hints, and what they have opened
     bomblabctl list                       scores, drill progress
     bomblabctl status                     operating window and state
     bomblabctl open|close|auto            override the window (auto = follow it)
@@ -297,6 +300,42 @@ def cmd_export(args, cfg, db):
     print("점수: %s , 이벤트: %s" % (args.out, epath))
 
 
+def cmd_solution(args, cfg, db):
+    """A student's own bomb: answers, walkthrough, hints, and their progress."""
+    user = db.user_by_name(args.user)
+    if user is None:
+        sys.exit("없는 사용자: %s" % args.user)
+    parsed = layout.parse_label(args.bomb)
+    if parsed is None:
+        sys.exit("폭탄은 bomb | practice | d0 .. d9 중 하나")
+    track, kind = parsed
+    bomb = next((b for b in db.bombs_of(user["id"])
+                 if b["track"] == track and b["kind"] == kind), None)
+    if bomb is None:
+        sys.exit("%s 에게 활성 %s 폭탄이 없습니다." % (args.user, args.bomb))
+    path = os.path.join(cfg.bombs_dir, bomb["bomb_id"], "SOLUTION.md")
+    defused = sorted(db.defused_phases(bomb["bomb_id"]))
+    print("학생: %s (%s)   폭탄: ~/%s   bomb_id: %s"
+          % (user["username"], user["nickname"],
+             layout.rel_dir(track, kind), bomb["bomb_id"]))
+    print("해제한 단계: %s   폭발: %d"
+          % (", ".join(map(str, defused)) or "-",
+             db.explosions(bomb["bomb_id"])))
+    opened = []
+    for stage in range(1, 8):
+        ks = sorted(db.hints_opened(bomb["bomb_id"], stage))
+        if ks:
+            opened.append("%d단계 %s" % (stage, ",".join(map(str, ks))))
+    print("연 힌트: %s" % ("  ".join(opened) or "-"))
+    print("파일: %s" % path)
+    print("=" * 72)
+    try:
+        with open(path, encoding="utf-8") as f:
+            print(f.read())
+    except OSError as e:
+        sys.exit("SOLUTION.md 를 읽을 수 없습니다 (sudo 필요?): %s" % e)
+
+
 def cmd_purge(args, cfg, db):
     need_root()
     if not args.yes:
@@ -338,6 +377,9 @@ def main(argv=None):
     p = sub.add_parser("reissue")
     p.add_argument("user")
     p.add_argument("bomb")
+    p = sub.add_parser("solution")
+    p.add_argument("user")
+    p.add_argument("bomb")
     for c in ("open", "close", "auto", "tick", "status", "list"):
         sub.add_parser(c)
     for c in ("lock", "unlock", "reset-password", "selftest-user"):
@@ -357,6 +399,7 @@ def main(argv=None):
     db = Database(cfg.db)
     dispatch = {
         "provision": cmd_provision, "reissue": cmd_reissue,
+        "solution": cmd_solution,
         "open": cmd_state, "close": cmd_state, "auto": cmd_state,
         "tick": cmd_tick, "status": cmd_status, "list": cmd_list,
         "lock": cmd_lock, "unlock": cmd_unlock,

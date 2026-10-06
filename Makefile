@@ -21,6 +21,7 @@
 #   make parity                 CMU-structure bombs vs the original (needs ref/)
 #   make calib                  toolchain calibration (dev machine, needs ref/)
 #   make selftest               practice server end to end, no root
+#   make hints                  regenerate server/HINTS.md (operators' hint list)
 
 PYTHON        ?= python3
 IMAGE         ?= bomblab-gcc48
@@ -47,7 +48,7 @@ FORBIDDEN := phases.c support.c driverlib.c support.h phases.h driverlib.h \
              bombdata.h answers.txt answers_secret.txt SOLUTION.md \
              manifest.json notes hints
 
-.PHONY: all toolchain kinds bomb dist verify parity calib selftest clean distclean
+.PHONY: all toolchain kinds bomb dist verify hints parity calib selftest clean distclean
 
 all: bomb
 
@@ -77,6 +78,14 @@ verify:
 	    $(foreach k,$(VKIND),--kind $(k))
 	bash tools/runtime_check.sh
 	bash tools/parity.sh $(SEEDS)
+	@mkdir -p build && $(PYTHON) tools/hint_catalog.py build/HINTS.check.md >/dev/null
+	@cmp -s build/HINTS.check.md server/HINTS.md || \
+	    { echo "server/HINTS.md is stale: run 'make hints'"; exit 1; }
+	@echo "server/HINTS.md up to date"
+
+# Operators' catalogue of every hint (regenerate after editing any hint).
+hints:
+	$(PYTHON) tools/hint_catalog.py
 
 parity:
 	bash tools/parity.sh $(SEEDS)

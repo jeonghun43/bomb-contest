@@ -90,25 +90,26 @@ bank/                         Python 패키지: 생성기 + 판정기 (서버가
       phases.h                phase 선언 (secret_phase는 원본처럼 매개변수 목록 없이)
       driverlib.c             서버 보고. 원본과 같은 파일 이름·API(init_driver, driver_post),
                               내부는 AF_UNIX (002의 notify.c에서 이전). 원본처럼 오프라인에도 링크
-    cmu/                      p1_strings.c, p2_double.c, p2_addi.c, p2_fact.c,
-                              p3_switch_dd.c, p3_switch_dcd.c, p4_func4_bsearch.c,
-                              p4_func4_fib.c, p5_charmap.c, p5_cycle.c,
-                              p6_list.c (7-x 유무·정렬 방향은 매크로), secret_fun7.c
-    drills/d0/ … d9/          s1.c s2.c s3.c
+    cmu/                      1차(구현됨): p1_strings.c, p2_double.c, p3_switch_dd.c,
+                              p4_func4_bsearch.c, p5_charmap.c, p6_list.c, secret_fun7.c
+                              2차(T081, 미구현): p2_addi.c, p2_fact.c, p3_switch_dcd.c,
+                              p4_func4_fib.c, p5_cycle.c
+    drills/d0/ … d9/          s1.c s2.c s3.c (D3은 s2_addi/s2_fact, s3_fib/s3_collatz; D9는 secret.c)
     test/phases_rt.c          런타임 시험용 phase (답이 뻔함, 배포 안 함)
-toolchain/Dockerfile          GCC 4.8.1 이미지 (완료)
+  words.py                    드릴용 단어·문구 풀
+toolchain/Dockerfile          GCC 4.8.1 이미지
 tools/
-  asmdiff.py                  함수 단위 비교 (완료, --mask-imm 추가 예정)
+  asmdiff.py                  함수 단위 비교 (--mask-imm: 상수 무시, --data: 데이터 배치 순서)
   buildbomb.py                bank → OUT 디렉터리 → 컨테이너 컴파일 (Makefile·서버 공용)
   parity.sh                   원본 일치 회귀 검사 (ref/ 있을 때)
-  elfcheck.py                 AC-05b ELF 특성 검사
+  elfcheck.py                 AC-05b ELF 특성 검사 (표준 라이브러리 + binutils만)
   runtime_check.sh            공통 런타임 검사: 입력 처리, 드릴 main, 원본 대조(ref/), 서버 보고(가짜 데몬)
   fuzz_bank.py                판정기 vs 바이너리 대조
-  verify_bank.sh              모든 계열 × 모든 드릴 단계 × N 시드 검증 (AC-01~04, 07)
-  server_selftest.sh          002 2판 기준으로 갱신
+  verify_bank.py              모든 계열 × 모든 드릴 단계 × N 시드 검증 (AC-01~04, 07, NFR-11, 14)
+  server_selftest.py / .sh    002 2판 서버 셀프테스트 (root 불필요)
 ```
 
-**제거**(git 이력에 보존): `src/`(001 자체제작 폭탄), `tools/gen_bomb.py`, `tools/bombcheck.py`, `tools/fuzz_checker.py`, `tools/check_secret_unique.py`, `tools/verify.sh`.
+**보관**: 001 자체제작 폭탄과 002 1판(대회 서버)의 코드·문서는 `previous/`로 옮겼다([previous/README.md](../../previous/README.md)). 현재 코드와 서로 참조하지 않는다.
 
 ### 빌드 산출물 (`OUT/`)
 
@@ -135,12 +136,12 @@ tools/
 | p2 | `addi`, `fact` | 2차 | 초항 | 같은 규칙 |
 | p3 | `switch_dd` | ✅ | case 0~7의 값 | 값 100~999, 서로 다름 |
 | p3 | `switch_dcd` | 2차 | case별 (문자, 값) | 문자는 소문자, 서로 다름 |
-| p4 | `func4_bsearch` | ✅ | 상한 `hi`(원본 14), 목표 반환값, 둘째 수 | 해가 1~3개가 되도록 목표값 선택. 전수 검사로 해 개수 확인 |
+| p4 | `func4_bsearch` | ✅ | 상한 `hi`(10~30, 원본 14), 둘째 수(0~99) | 목표 반환값은 원본처럼 0 고정(다른 값이면 `test`가 `cmp`로 바뀌어 코드 모양이 달라짐). 정답은 왼쪽으로만 내려가는 값들(여러 개) |
 | p4 | `func4_fib` | 2차 | 목표값 | |
-| p5 | `charmap` | ✅ | 16칸 표, 목표 6글자 | 표는 소문자 16개(중복 허용 안 함). 목표는 표 글자로 만든 무작위 문자열이며 사전 단어 목록에 있으면 다시 뽑음 |
+| p5 | `charmap` | ✅ | 16칸 표, 목표 6글자 | 표는 서로 다른 소문자 16개. 목표는 표 글자로 만든 무작위 문자열. 하위 4비트만 맞으면 되므로 정답은 여러 개 |
 | p5 | `cycle` | 2차 | 16칸 순환 배열, 횟수 | |
 | p6 | `list` | ✅(7-x, 내림차순) | 노드 값 6개, 7-x 유무, 정렬 방향 | 값 100~999 서로 다름. 정답 순열이 항등·역순이면 다시 뽑음. 1차는 원본과 같은 7-x·내림차순 고정 |
-| secret | `fun7` | ✅ | 15노드 완전 BST 값, 목표 반환값, 진입 문자열 | 값 1~1001, 목표 반환값을 만드는 노드가 정확히 하나. 진입 문자열은 단어 풀에서 선택 |
+| secret | `fun7` | ✅ | 15노드 완전 BST 값, 목표 반환값, 진입 문자열 | 값 1~1000, 목표 반환값 1~7(0이면 `test`로 코드 모양이 바뀜). 경로 끝에서 왼쪽으로만 더 내려간 노드도 같은 값을 돌려주므로 정답이 여러 개일 수 있음(원본도 그렇다). 진입 문자열은 단어 풀에서 선택 |
 
 ### 4.2 정답과 해설
 - `answers.txt`: 6줄. `answers_secret.txt`: 4번째 줄에 진입 문자열을 붙이고 7번째 줄 추가.
@@ -151,8 +152,10 @@ tools/
 
 - 드릴 폭탄은 `drill_main.c`로 만든다. 원본 `main`과 같은 흐름(환영 → `read_line` → `phase_N` → `phase_defused` → 메시지)을 3단계로 줄인 것이며, 함수 이름도 `phase_1`~`phase_3`을 쓴다. 과제에서 쓸 gdb 습관(`break phase_2`, `break explode_bomb`)이 그대로 연습되게 하기 위해서다.
 - D9만 원본 `phase_defused` 진입 구조(특정 줄의 추가 토큰)로 숨은 단계를 포함한다.
-- 단계 템플릿 하나 = `drills/dN/sK.c` 하나. CMU 슬롯 템플릿을 재사용할 수 있으면 재사용한다(예: D4 ①은 `p3_switch_dd.c`와 같은 코드 모양, 상수 개수만 다름).
+- 단계 템플릿 하나 = `drills/dN/sK.c` 하나.
+- **분량 원칙**: 드릴 단계는 그 개념만 보이게 짧게(명령어 8~44개, 정렬용 `nop` 제외). 과제 phase에 붙는 부수적인 검사(두 번째 입력값, 중복 검사, 재연결 등)는 빼고 해설의 "과제에서는"에 적는다. 원본과 똑같은 전체 모양은 CMU 구조 연습 폭탄이 맡는다. 단, 점프 테이블처럼 컴파일러가 만드는 구조 자체가 학습 대상이면 그 구조가 나오는 최소 크기를 지킨다(GCC 4.8은 case 5개부터 점프 테이블). 측정값은 [research.md §7](research.md).
 - 단계마다 생성기·판정기·학생 해설·힌트를 둔다. 해설에는 "과제에서는 이 패턴이 이런 모습으로 나온다"를 반드시 포함한다(spec FR-24).
+- 컴파일러가 학습 대상을 없애 버리는 경우(인라인·상수 접힘)는 소스에서 막는다. 예: D5 1단계 `mix3`에 `noinline`.
 - 구현 순서: D0 → D1 → D2 → D3 → D4 → D5 → D6 → D7 → D8 → D9. 원본 phase 순서와 같아서, 앞 드릴을 만들 때 쓴 CMU 템플릿을 뒤 드릴이 재사용할 수 있다.
 
 ## 6. 빌드 파이프라인
@@ -201,7 +204,7 @@ HELLO <bomb_id>                    -> OK | CLOSED <reason> | ERR <reason>       
 EVENT <bomb_id> <kind> <phase> <hex> -> OK | ERR <reason>                         (유지)
 STATUS                             -> OK <json>          자기 폭탄 목록·진도·열린 해설·힌트
 NOTES <bomb_id> <stage>            -> OK <n>\n<본문 n바이트> | LOCKED
-HINT  <bomb_id> <stage> <k>        -> OK <n>\n<본문> | LOCKED <남은 초>
+HINT  <bomb_id> <stage> <k>        -> OK <n>\n<본문> | LOCKED <이유>
 NEW   <practice | drill:dN>        -> OK <request_id> | ERR <reason>
 REQ   <request_id>                 -> PENDING | DONE <설치 경로> | FAILED <reason>
 ```
@@ -238,11 +241,11 @@ REQ   <request_id>                 -> PENDING | DONE <설치 경로> | FAILED <r
 |---|---|---|---|
 | 원본 일치 (모양) | `parity.sh` | 자습용 계열 CMU 폭탄 vs 원본, 22개 함수 + 데이터 심볼 순서 | spec AC-05 |
 | ELF 특성 | `elfcheck.py` | 빌드되는 모든 폭탄 | AC-05b, AC-04 |
-| 정답 통과 / 오답 폭발 위치 | `verify_bank.sh` | 모든 계열(강제) × 모든 드릴 단계 × 시드 5개 | AC-01, AC-02 |
+| 정답 통과 / 오답 폭발 위치 / 렌더 결정성 | `verify_bank.py` | 모든 계열(강제) × 모든 드릴 단계 × 시드 5개 | AC-01, AC-02, NFR-14 |
 | 판정 일치 | `fuzz_bank.py` | 같은 범위, 계열마다 경계 입력 | AC-03, 002 AC-11 |
-| 입력 처리 | `verify_bank.sh` | 파일 EOF → stdin 전환, 빈 줄, 78자 초과 | AC-06 |
-| 배포 패키지 | `verify_bank.sh` | 금지 파일 없음 | AC-07 |
-| 서버 | `server_selftest.sh` (root 불필요, mock 빌더) | 002 2판 AC-01~11 | 002 AC |
+| 입력 처리 | `runtime_check.sh` | 파일 EOF → stdin 전환, 빈 줄, 78자 초과, Ctrl-C, 원본과 동작 비교 | AC-06 |
+| 배포 패키지 | `verify_bank.py` | 학생용 `bomb.c`에 정답·비밀 단어·생성 헤더가 없음 | AC-07 |
+| 서버 | `server_selftest.py` (root 불필요, 빌더는 프로세스 안에서 실행) | 002 2판 AC-01~10 | 002 AC |
 | 실서버 리허설 | VM | 설치 → provision → 재발급 → 해설 → 격리 | 002 AC-08, 12 |
 | 파일럿 | 학생 3명 이상 | 드릴 완료 후 CMU 구조 폭탄 하루 안에 해제 | spec AC-08 |
 

@@ -121,6 +121,11 @@
   - 결과(2026-10-05): 001 코드(`src/`, `gen_bomb.py`, `bombcheck.py`, `fuzz_checker.py`, `check_secret_unique.py`, `verify.sh`)와 Makefile의 예전 빌드 경로 제거. 제거 후 `make verify SEEDS=3`(366/366 + 런타임 32/32 + 원본 대조 3/3), `make selftest`(36/36), `make dist` 모두 통과
   - 문서: 학생 안내(`docs/README.md`), 개념 정리(`docs/PRIMER.md`, 원본 과제 패턴 중심으로 개정), 드릴 안내(`docs/DRILLS.md`, 학생 홈의 각 드릴에도 설치), 운영자 매뉴얼(`server/README.md`, AWS 절차 유지 + 노트북(WSL2) 운영 + 재발급 대처 추가)
 
+- [x] **T076** 운영진 질문 대응 도구 (2026-10-06)
+  - `bomblabctl solution <학생> <bomb|practice|d0..d9>`: 그 학생 폭탄의 `SOLUTION.md`(정답·풀이·힌트)와 해제한 단계·폭발 수·**학생이 연 힌트**를 함께 출력. 셀프테스트에 포함(38/38)
+  - `server/HINTS.md`: 모든 드릴 단계·CMU phase의 힌트 3개씩을 모은 운영진용 목록(`tools/hint_catalog.py`, `make hints`로 생성). 힌트 문장이 시드와 무관함을 확인하고 만들었으며, 과제형 phase마다 "막히면 연습할 드릴"을 붙임. `make verify`가 이 문서가 최신인지 검사
+  - `server/README.md` 8장에 "학생 질문 대응" 절차 추가(드릴·연습은 힌트 → 짚어 주기 → 해설, 과제형은 답 대신 같은 개념의 드릴 권유)
+
 ## Phase H — 2차 변형 계열과 운영 검증
 
 - [ ] **T080** 2차 변형 계열의 원본 존재 확인(공개 자료 조사) → 확인된 것만 `research.md`에 기록

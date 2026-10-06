@@ -317,6 +317,18 @@ def run(env):
                        env=cenv, capture_output=True, text=True)
     check(r.returncode == 0 and "힌트 1/3" in r.stdout, "bomblab hint")
 
+    print("== operator lookup")
+    ctl = os.path.join(ROOT, "server", "bin", "bomblabctl")
+    r = subprocess.run([sys.executable, ctl, "--config", env.ini, "solution",
+                        "selftester", "practice"], capture_output=True,
+                       text=True)
+    check(r.returncode == 0 and "# SOLUTION" in r.stdout and
+          "1단계 1" in r.stdout,
+          "bomblabctl solution shows the answers and the hints opened")
+    r = subprocess.run([sys.executable, ctl, "--config", env.ini, "solution",
+                        "selftester", "d9"], capture_output=True, text=True)
+    check(r.returncode != 0, "bomblabctl solution: no such bomb -> error")
+
     print("== window")
     Database(env.db_path).set_setting("override", config.CLOSED)
     check(send(env, "HELLO " + assign.bomb_id)[0].startswith("CLOSED"),

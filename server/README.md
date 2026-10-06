@@ -4,6 +4,7 @@
 
 - 설계·검증 세부: [specs/002-contest-server](../specs/002-contest-server/spec.md) (서버), [specs/003-practice-bank](../specs/003-practice-bank/spec.md) (문제은행)
 - 학생용 안내: [docs/README.md](../docs/README.md), 드릴 안내: [docs/DRILLS.md](../docs/DRILLS.md)
+- 운영진용 힌트 전체 목록: [HINTS.md](HINTS.md) (`tools/hint_catalog.py`로 생성)
 
 ---
 
@@ -178,6 +179,7 @@ sudo bomblabctl provision roster.csv
 |---|---|
 | `provision <roster.csv>` | 계정+비밀번호+폭탄 12개+카드 생성 (기존자 건너뜀) |
 | `reissue <user> <bomb\|practice\|d0..d9>` | 그 학생에게 새 폭탄 빌드·설치. 과제형도 가능(점수는 이전 기록 유지) |
+| `solution <user> <bomb\|practice\|d0..d9>` | 그 학생 폭탄의 정답·풀이·힌트, 해제한 단계, **학생이 연 힌트** (8장 "학생 질문 대응") |
 | `status` | 운영 상태·기간·학생 수·활성 폭탄 수 |
 | `list` | 학생별 순위·점수·폭발·해제 단계·드릴 완료 수·연습 완주 수 |
 | `open` | 지금 바로 열기 (운영 기간 무시) |
@@ -209,6 +211,25 @@ sudo bomblabctl provision roster.csv
 ---
 
 ## 8. 운영북 — 상황별 대처
+
+### 학생 질문 대응
+
+운영진이 모든 폭탄을 미리 풀어 둘 필요는 없습니다. 폭탄마다 정답·풀이·힌트가 자동으로 만들어져 있습니다.
+
+| 볼 것 | 방법 |
+|---|---|
+| 전체 힌트 (모든 드릴 단계, 연습 폭탄 phase별 3개씩) | [`server/HINTS.md`](HINTS.md). 힌트는 학생마다 같고 정답은 없음 |
+| 질문한 학생의 그 폭탄 정답·풀이 | `sudo bomblabctl solution bomb07 d3` (또는 `practice`, `bomb`) |
+| 그 학생이 이미 연 힌트, 해제한 단계 | 같은 명령의 맨 위 세 줄 |
+
+대응 순서:
+
+1. **드릴·연습 폭탄**이면 먼저 `bomblab hint <폭탄> <단계>`를 쓰라고 안내합니다. `solution`으로 학생이 몇 번 힌트까지 열었는지 보고, 그다음 힌트 수준으로 말해 주세요.
+2. 그래도 막히면 `solution`의 풀이를 보며 **어디를 보면 되는지**(어느 명령어, 어느 gdb 명령)만 짚어 줍니다. 정답을 불러 주면 연습이 되지 않습니다.
+3. 해제하면 `bomblab notes <폭탄>`으로 해설이 열립니다. 풀이를 비교해 보라고 권하세요.
+4. **과제형 `~/bomb`**은 실제 과제와 같은 조건이라 힌트·해설이 없습니다. 운영진도 그 폭탄의 답은 알려 주지 마세요. 대신 같은 개념의 드릴을 권합니다(`HINTS.md`의 phase마다 "연습할 드릴"이 적혀 있음). 예: phase 3에서 막힘 → D4, phase 6 → D7.
+
+운영진이 직접 풀어 보는 것을 권장하는 범위: 드릴 D0~D9를 한 번씩(나눠서 맡아도 됨, 전부 약 10시간), 연습 폭탄 하나. 과제형은 연습 폭탄과 같은 종류라 따로 풀 필요가 없습니다.
 
 ### 접속 문제
 
