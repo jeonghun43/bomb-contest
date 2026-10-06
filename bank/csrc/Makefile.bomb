@@ -1,0 +1,51 @@
+# Makefile.bomb - the only place the bomb's compiler flags live.
+#
+# Runs inside the bomblab-gcc48 container (GCC 4.8.1, toolchain/Dockerfile),
+# in a rendered bomb directory that holds every source it needs:
+#
+#     bomb.c  phases.c  support.c  [driverlib.c]  *.h  [variant sources]
+#
+# Flags are the original CMU bomb's, read from its DW_AT_producer
+# (specs/003-practice-bank/research.md section 1). Only bomb.c carries debug
+# info. Objects link in the original's order so the symbol table lists the
+# files the same way.
+#
+#   make -f Makefile.bomb                      offline bomb
+#   make -f Makefile.bomb NOTIFY=1 BOMB_ID=<hex16> NOTIFY_SOCKET=<path>
+#
+# Do not add flags here to imitate a property of the original (a canary, a
+# missing endbr64, ...). Those follow from this compiler and these flags; if
+# one does not match, the source or the toolchain is wrong.
+
+CC       = gcc
+CFLAGS   = -O1 -fstack-protector -mtune=generic -march=x86-64 -Wall
+DBGFLAGS = -ggdb
+
+NOTIFY        ?= 0
+BOMB_ID       ?=
+NOTIFY_SOCKET ?= /run/bomblab/report.sock
+
+ifeq ($(NOTIFY),1)
+ifeq ($(BOMB_ID),)
+$(error NOTIFY=1 requires BOMB_ID=<hex16>)
+endif
+# Reporting code only. bomb.c never sees these, so its DWARF producer string
+# stays identical to the original's.
+DEFS = -DNOTIFY -DBOMB_ID='"$(BOMB_ID)"' -DNOTIFY_SOCKET='"$(NOTIFY_SOCKET)"'
+endif
+
+OBJS = bomb.o phases.o support.o $(if $(wildcard driverlib.c),driverlib.o)
+
+bomb: $(OBJS)
+	$(CC) -o $@ $(OBJS)
+
+bomb.o: bomb.c $(wildcard *.h)
+	$(CC) $(CFLAGS) $(DBGFLAGS) -c bomb.c
+
+%.o: %.c $(wildcard *.h)
+	$(CC) $(CFLAGS) $(DEFS) -c $<
+
+clean:
+	rm -f bomb *.o
+
+.PHONY: clean

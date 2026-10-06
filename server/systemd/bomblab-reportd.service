@@ -6,7 +6,7 @@ After=network.target
 User=bomblab
 Group=bomblab
 WorkingDirectory=/opt/bomblab
-Environment=PYTHONPATH=/opt/bomblab/server:/opt/bomblab/tools
+Environment=PYTHONPATH=/opt/bomblab/server:/opt/bomblab:/opt/bomblab/tools
 Environment=BOMBLAB_CONFIG=/etc/bomblab/bomblab.ini
 ExecStart=/usr/bin/python3 -m bomblab.reportd
 Restart=always

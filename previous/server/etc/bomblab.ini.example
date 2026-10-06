@@ -1,0 +1,33 @@
+# Bomb Lab 대회 설정. /etc/bomblab/bomblab.ini 로 복사해 값을 채우세요.
+# 시각은 ISO 8601 + 타임존 오프셋. 비워 두면 그 경계는 없는 것으로 간주됩니다.
+
+[contest]
+name        = Bomb Lab Contest
+start_at    = 2026-10-01T13:00:00+09:00
+freeze_at   = 2026-10-01T18:30:00+09:00
+end_at      = 2026-10-01T19:00:00+09:00
+# 종료 시 접속 중인 세션까지 강제 종료할지 (no면 새 로그인만 차단)
+kick_on_end = no
+
+[scoring]
+# phase 1~6 점수 (쉼표 구분). 참가자에게 공지한 규칙과 맞추세요.
+#   현재 값 : 각 10점 (총 60) + secret 보너스
+#   원본 CMU: 10,10,10,10,15,15  (총 70), secret_points = 0
+phase_points      = 10,10,10,10,10,10
+secret_points     = 10
+explosion_penalty = 0.5
+max_penalty       = 20
+
+[server]
+# 참가자에게 안내할 주소 (접속 카드·리더보드 링크에 사용)
+public_host       = bomb.doublejeong.com
+socket            = /run/bomblab/report.sock
+db                = /var/lib/bomblab/bomblab.db
+listen            = 127.0.0.1:8080
+events_per_minute = 60
+
+[admin]
+# 관리자 화면(/admin) 인증. 아래 해시는 다음으로 생성:
+#   bomblabctl hash-password
+user          = admin
+password_hash = sha256$CHANGE_ME$CHANGE_ME

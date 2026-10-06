@@ -1,33 +1,39 @@
-# Bomb Lab 대회 설정. /etc/bomblab/bomblab.ini 로 복사해 값을 채우세요.
-# 시각은 ISO 8601 + 타임존 오프셋. 비워 두면 그 경계는 없는 것으로 간주됩니다.
+# Bomb Lab 연습 서버 설정. /etc/bomblab/bomblab.ini 로 복사해 값을 채우세요.
+# 시각은 ISO 8601 + 타임존 오프셋.
 
-[contest]
-name        = Bomb Lab Contest
-start_at    = 2026-10-01T13:00:00+09:00
-freeze_at   = 2026-10-01T18:30:00+09:00
-end_at      = 2026-10-01T19:00:00+09:00
-# 종료 시 접속 중인 세션까지 강제 종료할지 (no면 새 로그인만 차단)
-kick_on_end = no
+[site]
+name = Bomb Lab Practice
+
+[window]
+# 운영 기간: 교육 직후부터 수업 과제 공개 전까지 (기본 2주).
+# 기간 밖에서는 로그인과 기록이 막힙니다. 둘 다 비우면 상시 개방.
+# 운영자 명령으로 언제든 덮어쓸 수 있습니다: bomblabctl open | close | auto
+start_at = 2026-10-12T09:00:00+09:00
+end_at   = 2026-10-26T09:00:00+09:00
 
 [scoring]
-# phase 1~6 점수 (쉼표 구분). 참가자에게 공지한 규칙과 맞추세요.
-#   현재 값 : 각 10점 (총 60) + secret 보너스
-#   원본 CMU: 10,10,10,10,15,15  (총 70), secret_points = 0
-phase_points      = 10,10,10,10,10,10
+# 과제형 폭탄(~/bomb)만 점수에 반영됩니다. 원본 CMU 과제 배점과 같습니다.
+phase_points      = 10,10,10,10,15,15
 secret_points     = 10
 explosion_penalty = 0.5
 max_penalty       = 20
 
+[practice]
+# 학생이 `bomblab new ...`로 연습 폭탄·드릴을 다시 받을 수 있는 횟수 (시간당)
+reissue_per_hour = 30
+# 원본과 같은 컴파일러(GCC 4.8.1) 이미지. install.sh 가 만듭니다.
+image = bomblab-gcc48
+
 [server]
-# 참가자에게 안내할 주소 (접속 카드·리더보드 링크에 사용)
-public_host       = bomb.doublejeong.com
+# 학생에게 안내할 주소 (접속 카드·스코어보드 링크에 사용)
+public_host       = bomb.example.com
 socket            = /run/bomblab/report.sock
 db                = /var/lib/bomblab/bomblab.db
+bombs_dir         = /var/lib/bomblab/bombs
 listen            = 127.0.0.1:8080
 events_per_minute = 60
 
 [admin]
-# 관리자 화면(/admin) 인증. 아래 해시는 다음으로 생성:
-#   bomblabctl hash-password
+# 관리자 화면(/admin) 인증. 해시 생성: bomblabctl hash-password
 user          = admin
 password_hash = sha256$CHANGE_ME$CHANGE_ME

@@ -1,0 +1,16 @@
+# Per-contestant resource caps so one person cannot starve the others.
+#
+# This is applied to each user's systemd slice via a drop-in. Install:
+#   sudo mkdir -p /etc/systemd/system/user-.slice.d
+#   sudo cp server/etc/system/bomblab-contestant.slice \
+#           /etc/systemd/system/user-.slice.d/50-bomblab.conf
+#   sudo systemctl daemon-reload
+#
+# Note: this caps EVERY user login slice (user-<uid>.slice). On a dedicated
+# contest box that is exactly what we want. Adjust the numbers for your box.
+
+[Slice]
+CPUQuota=100%
+MemoryMax=1G
+MemorySwapMax=256M
+TasksMax=256

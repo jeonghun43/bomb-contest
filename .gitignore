@@ -1,14 +1,11 @@
 # ---- 생성물: 정답이 들어 있으므로 절대 커밋 금지 ----
-# gen_bomb.py 가 만드는 시드별 데이터·정답·해설·바이너리
+# bank/render.py 가 만드는 폭탄 소스·정답·해설·바이너리 (build/, 서버는 /var/lib/bomblab/bombs)
 build/
 dist/
-src/bombdata.h
-src/bombdata.c
 bomb
-bomb.log
 
-# ---- 대회 운영 중 생기는 비밀·개인정보 ----
-# bomblabctl provision 이 현재 디렉터리에 만드는 참가자 접속 정보
+# ---- 운영 중 생기는 비밀·개인정보 ----
+# bomblabctl provision 이 현재 디렉터리에 만드는 학생 접속 정보
 credentials.csv
 cards.html
 # 실제 운영 설정(관리자 해시·시각 등). 예시 파일(.example)만 커밋
@@ -16,8 +13,14 @@ bomblab.ini
 *.db
 *.db-wal
 *.db-shm
+# 툴체인 이미지 백업 (docker save)
+*.tar.gz
 
 # ---- 로컬 개발 환경 ----
 .claude/settings.local.json
 __pycache__/
 *.pyc
+
+# ---- CMU 원본 자습용 폭탄 (환경 실측용 참고 자료, 재배포 금지) ----
+# 보정용 재구성 소스(ref/calib)에는 원본 정답이 들어 있다.
+ref/

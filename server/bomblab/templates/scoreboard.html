@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bomb Lab Scoreboard</title>
 <style>
-  /* Classic CMU/IIT bomblab scoreboard: light-blue table, white gridlines,
+  /* Classic CMU bomblab scoreboard: light-blue table, white gridlines,
      darker-blue header, black sans-serif text. */
   html { color-scheme: light; }
   body {
@@ -16,24 +16,27 @@
     margin: 24px;
   }
   h1 { font-size: 28px; margin: 0 0 14px; font-weight: bold; }
-  p.note { max-width: 62ch; line-height: 1.5; margin: 0 0 14px; }
+  h2 { font-size: 20px; margin: 32px 0 10px; }
+  p.note { max-width: 70ch; line-height: 1.5; margin: 0 0 14px; }
   .invalid-word { color: #d00000; font-weight: bold; }
   .updated { margin: 0 0 16px; }
-  .frozen { color: #d00000; font-weight: bold; }
+  .closed { color: #d00000; font-weight: bold; }
+  .wrap { overflow-x: auto; }
 
   table { border-collapse: separate; border-spacing: 2px; background: #ffffff; }
-  th, td { padding: 6px 16px; text-align: center; white-space: nowrap; }
-  th { background: #a9c1e3; font-weight: bold; }   /* header blue  */
-  td { background: #d7e3f4; }                        /* data blue    */
+  th, td { padding: 6px 14px; text-align: center; white-space: nowrap; }
+  th { background: #a9c1e3; font-weight: bold; }
+  td { background: #d7e3f4; }
   th.name, td.name { text-align: left; }
   .status-invalid { color: #d00000; font-weight: bold; }
+  td.full { background: #b9e3c6; }
+  td.part { background: #e9f1d0; }
 
   .summary { margin-top: 16px; max-width: 92ch; line-height: 1.6; }
-  .summary b { font-weight: bold; }
 </style>
 </head>
 <body>
-<h1>Bomb Lab Scoreboard</h1>
+<h1 id="title">Bomb Lab Scoreboard</h1>
 
 <p class="note">
 This page contains the latest information that we have received from the bombs.
@@ -44,9 +47,11 @@ explosion).
 
 <div class="updated">
   Last updated: <span id="updated">-</span> (updated every 30 secs)
-  <span id="freeze"></span>
+  <span id="state"></span>
 </div>
 
+<h2>Scored bomb (<code>~/bomb</code>)</h2>
+<div class="wrap">
 <table>
   <thead>
     <tr>
@@ -61,12 +66,22 @@ explosion).
   </thead>
   <tbody id="rows"></tbody>
 </table>
-
+</div>
 <div class="summary" id="summary"></div>
 
+<h2>Drill progress (does not affect the score)</h2>
+<p class="note">Each cell shows the stages defused in that drill. Green = finished.
+The last column counts practice bombs (<code>~/practice</code>) fully defused.</p>
+<div class="wrap">
+<table>
+  <thead><tr id="dhead"></tr></thead>
+  <tbody id="drows"></tbody>
+</table>
+</div>
+
 <script>
-function esc(s){ return String(s).replace(/[&<>]/g, function(c){
-  return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
+function esc(s){ return String(s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
 async function refresh() {
   let d;
@@ -76,38 +91,49 @@ async function refresh() {
     document.getElementById('updated').textContent = '(server unreachable, retrying)';
     return;
   }
-  document.title = d.contest + ' - Bomb Lab Scoreboard';
-  document.querySelector('h1').textContent = d.contest;
+  document.title = d.site + ' - Scoreboard';
+  document.getElementById('title').textContent = d.site;
   document.getElementById('updated').textContent = d.updated;
-
-  const fz = document.getElementById('freeze');
-  fz.className = d.frozen ? 'frozen' : '';
-  fz.textContent = d.frozen
-    ? '   [ SCOREBOARD FROZEN - final results shown after the contest ]'
-    : (d.state === 'before' ? '   [ not started ]'
-       : d.state === 'ended' ? '   [ contest ended ]' : '');
+  const st = document.getElementById('state');
+  st.className = d.state === 'closed' ? 'closed' : '';
+  st.textContent = d.state === 'closed' ? '   [ practice server closed ]' : '';
 
   document.getElementById('rows').innerHTML = d.rows.map(function(r){
-    const st = r.status === 'invalid'
+    const s = r.status === 'invalid'
       ? '<span class="status-invalid">invalid</span>' : 'valid';
     return '<tr>'
       + '<td>' + r.rank + '</td>'
       + '<td class="name">' + esc(r.username) + '</td>'
       + '<td>' + esc(r.submission) + '</td>'
-      + '<td>' + r.pcount + '</td>'
+      + '<td>' + r.pcount + (r.secret ? ' + hidden' : '') + '</td>'
       + '<td>' + r.explosions + '</td>'
       + '<td>' + r.score + '</td>'
-      + '<td>' + st + '</td>'
+      + '<td>' + s + '</td>'
       + '</tr>';
   }).join('');
 
-  const s = d.summary || {};
+  const sm = d.summary || {};
   let parts = '';
-  for (let p = 1; p <= 7; p++) parts += ' [' + p + ':' + (s[p] || 0) + ']';
+  for (let p = 1; p <= 7; p++) parts += ' [' + p + ':' + (sm[p] || 0) + ']';
   document.getElementById('summary').innerHTML =
     '<b>Summary</b> [phase:cnt]' + parts
     + '&nbsp;&nbsp; total defused = ' + d.fully + '/' + d.total
     + '  (phase 7 = hidden stage)';
+
+  const drills = Object.keys(d.drill_stages);
+  document.getElementById('dhead').innerHTML =
+    '<th class="name">Bomb&nbsp;number</th>'
+    + drills.map(function(x){ return '<th>' + x.toUpperCase() + '</th>'; }).join('')
+    + '<th>Drills&nbsp;done</th><th>Practice</th>';
+  document.getElementById('drows').innerHTML = d.drill_rows.map(function(r){
+    const cells = drills.map(function(x){
+      const got = r.drills[x] || [], need = d.drill_stages[x];
+      const cls = got.length >= need ? 'full' : (got.length ? 'part' : '');
+      return '<td class="' + cls + '">' + got.length + '/' + need + '</td>';
+    }).join('');
+    return '<tr><td class="name">' + esc(r.username) + '</td>' + cells
+      + '<td>' + r.done + '/10</td><td>' + r.practice + '</td></tr>';
+  }).join('');
 }
 refresh();
 setInterval(refresh, 30000);

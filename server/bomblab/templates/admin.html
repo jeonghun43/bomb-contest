@@ -7,9 +7,11 @@
 <style>
   :root { color-scheme: dark; }
   body { font-family: system-ui, sans-serif; margin:0; background:#0f1220; color:#e8e8f0; }
-  header { padding:14px 20px; background:#171a2e; border-bottom:1px solid #2a2f4a; }
+  header { padding:14px 20px; background:#171a2e; border-bottom:1px solid #2a2f4a;
+           display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
   h1 { margin:0; font-size:18px; }
   .wrap { display:grid; grid-template-columns: 1fr 1fr; gap:16px; padding:16px; }
+  @media (max-width: 1100px) { .wrap { grid-template-columns: 1fr; } }
   h2 { font-size:14px; color:#8a90b8; margin:0 0 8px; }
   table { border-collapse:collapse; width:100%; font-size:13px; }
   th,td { padding:5px 8px; border-bottom:1px solid #23273f; text-align:center; font-variant-numeric:tabular-nums; }
@@ -17,23 +19,38 @@
   td.name,td.in { text-align:left; }
   .ok{color:#7ee2a8}.sec{color:#ffd479}.no{color:#3b3f5c}
   .defused{color:#7ee2a8}.exploded{color:#ff9db0}.invalid{color:#ff6b8a;font-weight:700}
-  code{color:#cbd0ff}
-  #feed{max-height:80vh;overflow:auto}
+  code{color:#cbd0ff; word-break:break-all}
+  .scroll{max-height:42vh;overflow:auto}
+  #feed{max-height:84vh;overflow:auto}
   .state{font-size:13px;color:#ffd479}
+  select{background:#171a2e;color:#e8e8f0;border:1px solid #2a2f4a;padding:3px 6px}
 </style>
 </head>
 <body>
 <header>
   <h1>Bomb Lab 관리자 <span class="state" id="state"></span></h1>
+  <label>이벤트 필터
+    <select id="track">
+      <option value="">전체</option>
+      <option value="assign">과제형</option>
+      <option value="practice">연습</option>
+      <option value="drill">드릴</option>
+    </select>
+  </label>
 </header>
 <div class="wrap">
   <div>
-    <h2>실시간 순위 (프리즈 무시)</h2>
-    <table>
-      <thead><tr><th>#</th><th style="text-align:left">참가자</th>
+    <h2>과제형 폭탄 순위</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th style="text-align:left">학생</th>
         <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>★</th><th>💥</th><th>점수</th></tr></thead>
       <tbody id="rows"></tbody>
-    </table>
+    </table></div>
+    <h2 style="margin-top:16px">드릴 진도 · 연습 완주</h2>
+    <div class="scroll"><table>
+      <thead><tr id="dhead"></tr></thead>
+      <tbody id="drows"></tbody>
+    </table></div>
   </div>
   <div>
     <h2>이벤트 (입력 원문 포함)</h2>
@@ -41,24 +58,38 @@
   </div>
 </div>
 <script>
-function cell(t, sec){ return t ? '<td class="'+(sec?'sec':'ok')+'" title="'+t+'">●</td>' : '<td class="no">·</td>'; }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function cell(t, sec){ return t ? '<td class="'+(sec?'sec':'ok')+'" title="'+esc(t)+'">●</td>' : '<td class="no">·</td>'; }
+const TRACK = {assign:'과제형', practice:'연습', drill:'드릴', legacy:'v1'};
 async function refresh(){
   const s = await (await fetch('/api/admin/scoreboard')).json();
   document.getElementById('state').textContent = '· ' + s.state;
   document.getElementById('rows').innerHTML = s.rows.map(function(r){
     let c=''; for(let p=1;p<=6;p++) c+=cell(r.phases[p],false); c+=cell(r.phases['7'],true);
-    return '<tr><td>'+r.rank+'</td><td class="name">'+r.nickname+'</td>'+c
+    return '<tr><td>'+r.rank+'</td><td class="name">'+esc(r.nickname)+' ('+esc(r.username)+')</td>'+c
       +'<td class="exploded">'+(r.explosions||'')+'</td><td><b>'+r.score+'</b></td></tr>';
   }).join('');
-  const f = await (await fetch('/api/admin/feed')).json();
+  const drills = Object.keys(s.drill_stages);
+  document.getElementById('dhead').innerHTML = '<th style="text-align:left">학생</th>'
+    + drills.map(function(x){ return '<th>'+x.toUpperCase()+'</th>'; }).join('') + '<th>연습</th>';
+  document.getElementById('drows').innerHTML = s.drill_rows.map(function(r){
+    return '<tr><td class="name">'+esc(r.nickname)+'</td>'
+      + drills.map(function(x){ const g=(r.drills[x]||[]).length;
+          return '<td class="'+(g>=s.drill_stages[x]?'ok':(g?'sec':'no'))+'">'+g+'/'+s.drill_stages[x]+'</td>'; }).join('')
+      + '<td>'+r.practice+'</td></tr>';
+  }).join('');
+  const t = document.getElementById('track').value;
+  const f = await (await fetch('/api/admin/feed' + (t ? '?track=' + t : ''))).json();
   document.getElementById('events').innerHTML = f.events.map(function(e){
-    const kls = e.kind;
-    const inp = e.input===null?'':('<code>'+e.input.replace(/</g,'&lt;')+'</code>');
-    return '<tr><td>'+e.time+'</td><td class="name">'+e.nickname+' ('+e.username+')</td>'
-      +'<td>P'+e.phase+'</td><td class="'+kls+'">'+e.kind+(e.late?' ⏱':'')+'</td>'
+    const inp = e.input==null ? '' : '<code>'+esc(e.input)+'</code>';
+    return '<tr><td>'+esc(e.time)+'</td><td class="name">'+esc(e.nickname)+' ('+esc(e.username)+')</td>'
+      +'<td>'+esc(TRACK[e.track]||e.track)+' '+esc(e.bomb)+'</td><td>P'+e.phase+'</td>'
+      +'<td class="'+esc(e.kind)+'">'+esc(e.kind)+(e.late?' ⏱':'')+'</td>'
       +'<td class="in">'+inp+'</td></tr>';
   }).join('');
 }
+document.getElementById('track').addEventListener('change', refresh);
 refresh(); setInterval(refresh, 5000);
 </script>
 </body>

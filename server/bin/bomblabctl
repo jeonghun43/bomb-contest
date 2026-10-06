@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """
-bomblabctl - Operator command line for the Bomb Lab contest.
+bomblabctl - Operator command line for the Bomb Lab practice server.
 
-    bomblabctl provision roster.csv     create accounts + per-user bombs
-    bomblabctl list                     table of users, state, score
-    bomblabctl status                   contest state and timing
-    bomblabctl start|freeze|unfreeze|stop|auto
-                                        override the contest state
-    bomblabctl tick                     apply lock/unlock for current state
-    bomblabctl lock|unlock <user>       gate one account
-    bomblabctl reset-password <user>    new random password
-    bomblabctl export out.csv           final ranking + full event log
-    bomblabctl purge [--yes]            remove all contest accounts (after export)
-    bomblabctl selftest-user <name>     register an existing account for testing
-    bomblabctl hash-password            print a hash for bomblab.ini [admin]
+    bomblabctl provision roster.csv       accounts + every student's bombs
+    bomblabctl reissue <user> <bomb|practice|d0..d9>
+                                          build a fresh bomb (scored one too)
+    bomblabctl list                       scores, drill progress
+    bomblabctl status                     operating window and state
+    bomblabctl open|close|auto            override the window (auto = follow it)
+    bomblabctl tick                       apply login gating for the state
+    bomblabctl lock|unlock <user>         gate one account
+    bomblabctl reset-password <user>      new random password
+    bomblabctl export out.csv             scores + drill progress + event log
+    bomblabctl purge [--yes]              remove all student accounts
+    bomblabctl selftest-user <name>       register an existing account (tests)
+    bomblabctl hash-password              print a hash for bomblab.ini [admin]
 
 Most commands need root (they create Unix accounts and build bombs).
 Account gating uses the account-expiration date, which blocks both password
-and key logins: expired => locked, cleared => open.
+and key logins: expired => locked, cleared => open. Without an operating
+window in bomblab.ini the server is always open.
 """
 
 import argparse
@@ -26,23 +28,20 @@ import datetime
 import os
 import pwd
 import secrets
-import string
 import subprocess
 import sys
 
-# realpath (not abspath) so this resolves correctly when invoked through the
-# /usr/local/sbin/bomblabctl symlink that install.sh creates.
+# realpath: invoked through the /usr/local/sbin/bomblabctl symlink.
 _HERE = os.path.dirname(os.path.realpath(__file__))
-_ROOT = os.path.dirname(os.path.dirname(_HERE))  # repo root (…/server/bin → …)
+_ROOT = os.path.dirname(os.path.dirname(_HERE))
 sys.path.insert(0, os.path.join(_ROOT, "server"))
+sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "tools"))
 
-from bomblab import config          # noqa: E402
-from bomblab.db import Database      # noqa: E402
-from bomblab import scoring          # noqa: E402
+from bomblab import config, layout, scoring   # noqa: E402
+from bomblab.db import Database                # noqa: E402
 
-PW_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"  # no 0O1lI
-BOMBS_DIR = "/var/lib/bomblab/bombs"
+PW_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
 def need_root():
@@ -63,144 +62,148 @@ def set_password(username, password):
 
 
 def set_expired(username, expired):
-    # expired: account is locked out. Not expired: open.
-    date = "1970-01-02" if expired else "-1"
-    run(["usermod", "--expiredate", date, username])
+    run(["usermod", "--expiredate", "1970-01-02" if expired else "-1",
+         username])
+
+
+def is_open(cfg, db):
+    return cfg.state(db.get_setting("override", "auto")) == config.OPEN
 
 
 # --------------------------------------------------------------------------
-# provision
+# provision / reissue
 # --------------------------------------------------------------------------
 
-def build_bomb(username, seed, bomb_id, cfg):
-    out = os.path.join(BOMBS_DIR, username)
-    os.makedirs(out, exist_ok=True)
-    run(["make", "-C", _ROOT, "NOTIFY=1", "SEED=%d" % seed,
-         "BOMB_ID=%s" % bomb_id, "OUT=%s" % out,
-         "NOTIFY_SOCKET=%s" % cfg.socket, "bomb"])
-    return os.path.join(out, "bomb")
-
-
-def install_home(username, bomb_path):
-    home = pwd.getpwnam(username).pw_dir
-    dest = os.path.join(home, "bomb")
-    os.makedirs(dest, exist_ok=True)
-    for src, name in [(bomb_path, "bomb"),
-                      (os.path.join(_ROOT, "src", "bomb.c"), "bomb.c"),
-                      (os.path.join(_ROOT, "docs", "README.md"), "README.md"),
-                      (os.path.join(_ROOT, "docs", "PRIMER.md"), "PRIMER.md")]:
-        run(["install", "-m", "0755" if name == "bomb" else "0644",
-             src, os.path.join(dest, name)])
-    run(["chown", "-R", "%s:%s" % (username, username), dest])
-    run(["chmod", "0700", home])
-
-
-def cmd_provision(args, cfg, db):
-    need_root()
-    os.makedirs(BOMBS_DIR, exist_ok=True)
+def read_roster(path):
     rows = []
-    with open(args.roster, newline="", encoding="utf-8") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         for row in csv.reader(f):
             if not row or row[0].strip().startswith("#"):
                 continue
             nickname = row[0].strip()
-            username = (row[1].strip() if len(row) > 1 and row[1].strip()
-                        else None)
             if nickname.lower() in ("nickname", "닉네임"):
                 continue
+            username = row[1].strip() if len(row) > 1 and row[1].strip() \
+                else None
             rows.append((nickname, username))
+    return rows
 
+
+def cmd_provision(args, cfg, db):
+    need_root()
+    from bomblab import builder
     existing = {u["username"] for u in db.all_users()}
     n = len(existing)
-    creds = []
-    for nickname, username in rows:
+    created, creds = [], []
+    open_now = is_open(cfg, db)
+    for nickname, username in read_roster(args.roster):
         if username is None:
             n += 1
             username = "bomb%02d" % n
         if username in existing:
             print("건너뜀 (이미 존재): %s" % username)
             continue
-
         password = gen_password()
-        # Create the account (locked until start).
         run(["useradd", "-m", "-s", "/bin/bash", "-G", "contestants", username])
         set_password(username, password)
-        set_expired(username, True)
+        set_expired(username, not open_now)
         uid = pwd.getpwnam(username).pw_uid
-
-        seed = secrets.randbits(63)
-        bomb_id = secrets.token_hex(8)
-        bomb_path = build_bomb(username, seed, bomb_id, cfg)
-        install_home(username, bomb_path)
-        db.add_user(username, uid, nickname, seed, bomb_id)
+        db.add_user(username, uid, nickname)
+        db.set_locked(username, not open_now)
+        created.append(db.user_by_name(username))
         existing.add(username)
         creds.append((nickname, username, password))
-        print("생성: %s (%s)" % (username, nickname))
+        print("계정: %s (%s)" % (username, nickname))
 
-    if creds:
+    if created:
+        items = [(u, t, k) for u in created for t, k in layout.all_slots()]
+        print("폭탄 %d개 빌드 (학생 %d명 × %d)..."
+              % (len(items), len(created), len(layout.all_slots())))
+        builder.build_and_install(cfg, db, items)
         write_credentials(cfg, creds)
     print("완료: %d명 신규 생성" % len(creds))
+
+
+def cmd_reissue(args, cfg, db):
+    need_root()
+    from bomblab import builder
+    user = db.user_by_name(args.user)
+    if user is None:
+        sys.exit("없는 사용자: %s" % args.user)
+    parsed = layout.parse_label(args.bomb)
+    if parsed is None:
+        sys.exit("폭탄은 bomb | practice | d0 .. d9 중 하나")
+    builder.build_and_install(cfg, db, [(user, parsed[0], parsed[1])])
+
+
+def own_by_invoker(path):
+    """Hand provisioning output back to the operator who ran sudo."""
+    uid, gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
+    if uid and gid:
+        try:
+            os.chown(path, int(uid), int(gid))
+        except OSError:
+            pass
 
 
 def write_credentials(cfg, creds):
     cpath = os.path.join(os.getcwd(), "credentials.csv")
     with open(cpath, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["nickname", "username", "password", "ssh", "leaderboard"])
+        w.writerow(["nickname", "username", "password", "ssh", "scoreboard"])
         for nick, user, pw in creds:
             w.writerow([nick, user, pw, "ssh %s@%s" % (user, cfg.public_host),
                         "http://%s/" % cfg.public_host])
     os.chmod(cpath, 0o600)
+    own_by_invoker(cpath)
 
+    import html
     hpath = os.path.join(os.getcwd(), "cards.html")
     cards = "".join(
-        "<div class=card><h2>{nick}</h2>"
-        "<table>"
-        "<tr><td>서버</td><td><code>ssh {user}@{host}</code></td></tr>"
+        "<div class=card><h2>{nick}</h2><table>"
+        "<tr><td>접속</td><td><code>ssh {user}@{host}</code></td></tr>"
         "<tr><td>비밀번호</td><td><code>{pw}</code></td></tr>"
-        "<tr><td>리더보드</td><td>http://{host}/</td></tr>"
-        "</table></div>".format(nick=nick, user=user, pw=pw,
-                                host=cfg.public_host)
+        "<tr><td>스코어보드</td><td>http://{host}/</td></tr>"
+        "<tr><td>시작</td><td><code>cd ~/drills/d0</code> → <code>bomblab</code></td></tr>"
+        "</table></div>".format(nick=html.escape(nick), user=html.escape(user),
+                                pw=html.escape(pw),
+                                host=html.escape(cfg.public_host))
         for nick, user, pw in creds)
-    html = ("<!doctype html><meta charset=utf-8><style>"
+    page = ("<!doctype html><meta charset=utf-8><style>"
             "body{font-family:system-ui;margin:0}"
             ".card{page-break-inside:avoid;border:1px solid #ccc;border-radius:8px;"
-            "padding:14px 18px;margin:12px;display:inline-block;width:320px;vertical-align:top}"
+            "padding:14px 18px;margin:12px;display:inline-block;width:340px;vertical-align:top}"
             ".card h2{margin:0 0 8px;font-size:16px}"
             "td{padding:3px 8px}code{background:#f2f2f2;padding:1px 5px;border-radius:4px}"
             "</style>" + cards)
     with open(hpath, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(page)
     os.chmod(hpath, 0o600)
+    own_by_invoker(hpath)
     print("접속 정보: %s , 인쇄용: %s" % (cpath, hpath))
 
 
 # --------------------------------------------------------------------------
-# state overrides + gating
+# window / gating
 # --------------------------------------------------------------------------
 
 def cmd_state(args, cfg, db):
-    mapping = {"start": config.RUNNING, "freeze": config.FROZEN,
-               "unfreeze": config.RUNNING, "stop": config.ENDED,
-               "auto": "auto"}
-    db.set_setting("override", mapping[args.cmd])
-    print("상태 override = %s" % mapping[args.cmd])
+    value = {"open": config.OPEN, "close": config.CLOSED,
+             "auto": "auto"}[args.cmd]
+    db.set_setting("override", value)
+    print("override = %s" % value)
     cmd_tick(args, cfg, db)
 
 
 def cmd_tick(args, cfg, db):
     need_root()
-    override = db.get_setting("override", "auto")
-    state = cfg.state(override)
-    open_login = state in (config.RUNNING, config.FROZEN)
+    open_now = is_open(cfg, db)
     for u in db.all_users():
-        set_expired(u["username"], expired=not open_login)
-        db.set_locked(u["username"], locked=not open_login)
-    if state == config.ENDED and cfg.kick_on_end:
-        for u in db.all_users():
-            subprocess.run(["pkill", "-KILL", "-u", u["username"]],
-                           capture_output=True)
-    print("tick: state=%s, login=%s" % (state, "open" if open_login else "locked"))
+        if bool(u["locked"]) == (not open_now):
+            continue                       # already right; skip usermod
+        set_expired(u["username"], expired=not open_now)
+        db.set_locked(u["username"], locked=not open_now)
+    print("tick: %s" % ("open" if open_now else "closed"))
 
 
 def cmd_lock(args, cfg, db):
@@ -227,64 +230,71 @@ def cmd_reset_password(args, cfg, db):
 
 
 # --------------------------------------------------------------------------
-# read-only reporting
+# reporting
 # --------------------------------------------------------------------------
 
-def _fmt_state(cfg, db):
-    override = db.get_setting("override", "auto")
-    return cfg.state(override), override
-
-
 def cmd_status(args, cfg, db):
-    state, override = _fmt_state(cfg, db)
-    print("대회: %s" % cfg.name)
-    print("상태: %s (override=%s)" % (state, override))
-    for label, t in [("시작", cfg.start_at), ("프리즈", cfg.freeze_at),
-                     ("종료", cfg.end_at)]:
-        print("  %s: %s" % (label, t.isoformat() if t else "-"))
-    users = db.all_users()
-    print("참가자: %d명" % len(users))
+    override = db.get_setting("override", "auto")
+    print("사이트: %s" % cfg.name)
+    print("상태: %s (override=%s)" % (cfg.state(override), override))
+    print("운영 기간: %s ~ %s" % (cfg.start_at.isoformat() if cfg.start_at else "-",
+                               cfg.end_at.isoformat() if cfg.end_at else "-"))
+    print("학생: %d명, 활성 폭탄: %d개"
+          % (len(db.all_users()),
+             sum(1 for b in db.all_bombs() if b["active"])))
 
 
 def cmd_list(args, cfg, db):
-    _, override = _fmt_state(cfg, db)
-    cut = scoring.cutoff_for(cfg, override, public=False)
-    rows = scoring.score_rows(cfg, db.all_users(), db.all_events(), cut)
-    locked = {u["username"]: u["locked"] for u in db.all_users()}
-    print("%-4s %-10s %-14s %6s %5s %6s %s" %
-          ("#", "user", "nickname", "score", "boom", "login", "phases"))
+    users, events = db.all_users(), db.all_events()
+    rows = scoring.score_rows(cfg, users, events)
+    drills = scoring.drill_progress(users, events)
+    practice = scoring.practice_counts(users, events)
+    locked = {u["username"]: u["locked"] for u in users}
+    print("%-4s %-10s %-14s %6s %5s %-8s %-11s %s"
+          % ("#", "user", "nickname", "score", "boom", "phases", "drills", "연습"))
     for r in rows:
         phs = "".join(str(p) for p in range(1, 7) if p in r["phases"])
-        if 7 in r["phases"]:
+        if scoring.SECRET in r["phases"]:
             phs += "★"
-        print("%-4s %-10s %-14s %6s %5s %6s %s" %
-              (r["rank"], r["username"], r["nickname"], r["score"],
-               r["explosions"],
-               "잠김" if locked.get(r["username"]) else "열림", phs or "-"))
+        done = sum(1 for d, s in drills.get(r["username"], {}).items()
+                   if len(s) >= (4 if d == "d9" else 3))
+        print("%-4s %-10s %-14s %6s %5s %-8s %-11s %d%s"
+              % (r["rank"], r["username"], r["nickname"], r["score"],
+                 r["explosions"], phs or "-", "%d/10" % done,
+                 practice.get(r["username"], 0),
+                 "  (잠김)" if locked.get(r["username"]) else ""))
 
 
 def cmd_export(args, cfg, db):
-    _, override = _fmt_state(cfg, db)
-    cut = scoring.cutoff_for(cfg, override, public=False)
-    rows = scoring.score_rows(cfg, db.all_users(), db.all_events(), cut)
+    users, events = db.all_users(), db.all_events()
+    rows = scoring.score_rows(cfg, users, events)
+    drills = scoring.drill_progress(users, events)
+    practice = scoring.practice_counts(users, events)
+    names = [k.split(":")[1] for k in layout.DRILL_KINDS]
     with open(args.out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["rank", "username", "nickname", "score", "explosions",
-                    "p1", "p2", "p3", "p4", "p5", "p6", "secret"])
+                    "p1", "p2", "p3", "p4", "p5", "p6", "secret"]
+                   + names + ["practice_full"])
         for r in rows:
+            d = drills.get(r["username"], {})
             w.writerow([r["rank"], r["username"], r["nickname"], r["score"],
                         r["explosions"]]
-                       + ["Y" if p in r["phases"] else "" for p in range(1, 8)])
+                       + ["Y" if p in r["phases"] else "" for p in range(1, 8)]
+                       + [len(d.get(x, [])) for x in names]
+                       + [practice.get(r["username"], 0)])
     epath = args.out + ".events.csv"
     with open(epath, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["time", "username", "nickname", "phase", "kind",
-                    "input", "late"])
-        for e in db.all_events():
+        w.writerow(["time", "username", "nickname", "track", "bomb", "phase",
+                    "kind", "input", "late"])
+        for e in events:
             w.writerow([datetime.datetime.fromtimestamp(e["created_at"]).isoformat(),
-                        e["username"], e["nickname"], e["phase"], e["kind"],
-                        e["input"] or "", e["late"]])
-    print("순위: %s , 이벤트: %s" % (args.out, epath))
+                        e["username"], e["nickname"], e["track"] or "legacy",
+                        layout.label(e["track"], e["bomb_kind"])
+                        if e["track"] else "-",
+                        e["phase"], e["kind"], e["input"] or "", e["late"]])
+    print("점수: %s , 이벤트: %s" % (args.out, epath))
 
 
 def cmd_purge(args, cfg, db):
@@ -297,26 +307,25 @@ def cmd_purge(args, cfg, db):
                        capture_output=True)
         subprocess.run(["userdel", "-r", u["username"]], capture_output=True)
         db.delete_user(u["username"])
-    print("모든 대회 계정 삭제 완료")
+    print("모든 학생 계정 삭제 완료")
 
 
 def cmd_selftest_user(args, cfg, db):
-    # Register an existing local account (e.g. the operator's) for testing.
+    """Register an existing local account and give it bomb records (no build)."""
     entry = pwd.getpwnam(args.user)
-    seed = secrets.randbits(63)
-    bomb_id = secrets.token_hex(8)
     if db.user_by_name(args.user) is None:
-        db.add_user(args.user, entry.pw_uid, args.user, seed, bomb_id)
-    else:
-        db.update_seed(args.user, seed, bomb_id)
-    print("테스트 사용자 등록: %s uid=%d seed=%d bomb_id=%s"
-          % (args.user, entry.pw_uid, seed, bomb_id))
+        db.add_user(args.user, entry.pw_uid, args.user)
+    u = db.user_by_name(args.user)
+    for track, kind in layout.all_slots():
+        seed = secrets.randbelow(1 << 31)
+        bomb_id = secrets.token_hex(8)
+        db.add_bomb(u["id"], track, kind, seed, bomb_id, replace=True)
+        print("%-8s %-9s seed=%d bomb_id=%s" % (track, kind, seed, bomb_id))
 
 
 def cmd_hash_password(args, cfg, db):
     import getpass
-    pw = getpass.getpass("admin password: ")
-    print(config.hash_password(pw))
+    print(config.hash_password(getpass.getpass("admin password: ")))
 
 
 # --------------------------------------------------------------------------
@@ -325,32 +334,30 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="bomblabctl")
     ap.add_argument("--config", help="path to bomblab.ini")
     sub = ap.add_subparsers(dest="cmd", required=True)
-
     sub.add_parser("provision").add_argument("roster")
-    for c in ("start", "freeze", "unfreeze", "stop", "auto", "tick",
-              "status", "list"):
+    p = sub.add_parser("reissue")
+    p.add_argument("user")
+    p.add_argument("bomb")
+    for c in ("open", "close", "auto", "tick", "status", "list"):
         sub.add_parser(c)
     for c in ("lock", "unlock", "reset-password", "selftest-user"):
         sub.add_parser(c).add_argument("user")
     sub.add_parser("export").add_argument("out")
-    p = sub.add_parser("purge"); p.add_argument("--yes", action="store_true")
+    p = sub.add_parser("purge")
+    p.add_argument("--yes", action="store_true")
     sub.add_parser("hash-password")
-
     args = ap.parse_args(argv)
 
     if args.config:
         os.environ["BOMBLAB_CONFIG"] = args.config
     cfg = config.Config(args.config)
-
-    # hash-password needs no DB.
     if args.cmd == "hash-password":
         return cmd_hash_password(args, cfg, None)
 
     db = Database(cfg.db)
     dispatch = {
-        "provision": cmd_provision,
-        "start": cmd_state, "freeze": cmd_state, "unfreeze": cmd_state,
-        "stop": cmd_state, "auto": cmd_state,
+        "provision": cmd_provision, "reissue": cmd_reissue,
+        "open": cmd_state, "close": cmd_state, "auto": cmd_state,
         "tick": cmd_tick, "status": cmd_status, "list": cmd_list,
         "lock": cmd_lock, "unlock": cmd_unlock,
         "reset-password": cmd_reset_password, "export": cmd_export,

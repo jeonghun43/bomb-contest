@@ -1,0 +1,7 @@
+[Unit]
+Description=Bomb Lab scheduler tick (locks/unlocks accounts for contest state)
+
+[Service]
+Type=oneshot
+Environment=BOMBLAB_CONFIG=/etc/bomblab/bomblab.ini
+ExecStart=/opt/bomblab/server/bin/bomblabctl tick

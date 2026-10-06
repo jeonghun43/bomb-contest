@@ -1,0 +1,17 @@
+[Unit]
+Description=Bomb Lab builder (reissues practice and drill bombs on request)
+After=network.target docker.service bomblab-reportd.service
+Requires=docker.service
+
+[Service]
+# root: it compiles in the toolchain container and installs into homes.
+User=root
+WorkingDirectory=/opt/bomblab
+Environment=PYTHONPATH=/opt/bomblab/server:/opt/bomblab:/opt/bomblab/tools
+Environment=BOMBLAB_CONFIG=/etc/bomblab/bomblab.ini
+ExecStart=/usr/bin/python3 -m bomblab.builder
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,83 +1,112 @@
-# Makefile - build a seeded variant of the bomb.
+# Makefile - Bomb Lab practice bank (specs/003-practice-bank).
 #
-#   make SEED=20260215                    build ./bomb for that seed (offline)
-#   make dist SEED=20260215               package what contestants receive
-#   make verify FROM=1 TO=20              run the automated checks
-#   make NOTIFY=1 BOMB_ID=<hex16> \       build a server-mode bomb that reports
-#        SEED=... OUT=<dir>               to the record server
-#   make clean / distclean
+# Every bomb is compiled inside the bomblab-gcc48 container, the original CMU
+# bomb's own compiler (GCC 4.8.1). Build the image once per machine:
 #
-# OUT controls where generated data and the binary go, so several bombs can be
-# built side by side without clobbering one another. The generator no longer
-# writes into src/; bombdata.{h,c} live under $(OUT).
+#   make toolchain
+#
+# Bombs:
+#   make bomb KIND=cmu SEED=7                 build/cmu-7/bomb, copied to ./bomb
+#   make bomb KIND=drill:d3 SEED=7            build/drill-d3-7/bomb
+#   make bomb KIND=cmu SEED=7 FORCE="p3=switch_dd p6=list"
+#                                             pin variant families
+#   make bomb KIND=cmu SEED=7 NOTIFY=1 BOMB_ID=<hex16> OUT=<dir>
+#                                             server-mode bomb
+#   make dist KIND=cmu SEED=7                 what a student receives
+#   make kinds                                list every kind
+#
+# Verification:
+#   make verify                 every kind and variant (5 seeds), runtime, parity
+#   make verify SEEDS=2 VKIND="cmu drill:d3"
+#   make parity                 CMU-structure bombs vs the original (needs ref/)
+#   make calib                  toolchain calibration (dev machine, needs ref/)
+#   make selftest               practice server end to end, no root
 
-CC      := gcc
-CFLAGS  := -O1 -g -Wall -no-pie -fno-stack-protector
-PYTHON  := python3
+PYTHON        ?= python3
+IMAGE         ?= bomblab-gcc48
 
-SEED    ?= 0
-FROM    ?= 1
-TO      ?= 20
-OUT     ?= build/seed-$(SEED)
-
-# Server mode: report to the record daemon instead of writing a local log.
+KIND          ?=
+SEED          ?= 0
+FORCE         ?=
 NOTIFY        ?= 0
 BOMB_ID       ?=
 NOTIFY_SOCKET ?= /run/bomblab/report.sock
+SEEDS         ?= 5
+VKIND         ?=
 
-BASE_SRCS := src/bomb.c src/phases.c src/support.c src/util.c
-DATA_SRC  := $(OUT)/bombdata.c
-HDRS      := src/bomb.h $(OUT)/bombdata.h
-
+OUT        ?= build/$(subst :,-,$(KIND))-$(SEED)
+DISTDIR    := dist/$(subst :,-,$(KIND))-$(SEED)
+BUILD_ARGS := --kind $(KIND) --seed $(SEED) --out $(OUT) --image $(IMAGE) \
+              $(foreach f,$(FORCE),--force $(f))
 ifeq ($(NOTIFY),1)
-CFLAGS  += -DNOTIFY -DNOTIFY_SOCKET='"$(NOTIFY_SOCKET)"'
-BASE_SRCS += src/notify.c
-GEN_ID   := --bomb-id $(BOMB_ID)
-else
-GEN_ID   :=
+BUILD_ARGS += --notify --bomb-id $(BOMB_ID) --socket $(NOTIFY_SOCKET)
 endif
 
-SRCS := $(BASE_SRCS) $(DATA_SRC)
+# Everything a rendered bomb dir holds that must never reach a student.
+FORBIDDEN := phases.c support.c driverlib.c support.h phases.h driverlib.h \
+             bombdata.h answers.txt answers_secret.txt SOLUTION.md \
+             manifest.json notes hints
 
-DISTDIR    := dist/bomb-$(SEED)
-FORBIDDEN  := phases.c support.c util.c notify.c bombdata.h bombdata.c \
-              solution.txt solution_secret.txt SOLUTION.md
-
-.PHONY: all gen dist verify clean distclean
+.PHONY: all toolchain kinds bomb dist verify parity calib selftest clean distclean
 
 all: bomb
 
-# The generator is cheap and must rerun whenever SEED/OUT/BOMB_ID changes, so
-# it is a phony prerequisite rather than a file rule.
-gen:
-ifeq ($(NOTIFY),1)
-	@test -n "$(BOMB_ID)" || { echo "NOTIFY=1 requires BOMB_ID=<hex16>"; exit 1; }
-endif
-	@$(PYTHON) tools/gen_bomb.py --seed $(SEED) --out $(OUT) $(GEN_ID)
+toolchain:
+	docker build -t $(IMAGE) toolchain/
 
-bomb: gen $(HDRS) $(BASE_SRCS)
-	$(CC) $(CFLAGS) -I$(OUT) -Isrc -o $(OUT)/bomb $(SRCS)
+kinds:
+	@$(PYTHON) -c "import bank; print('\n'.join(bank.kinds()))"
+
+bomb:
+	@test -n "$(KIND)" || { echo "make bomb KIND=<cmu|drill:d0..d9> SEED=<n>"; exit 1; }
+	$(PYTHON) tools/buildbomb.py $(BUILD_ARGS)
 	@cp $(OUT)/bomb ./bomb
 
 dist: bomb docs/README.md docs/PRIMER.md
-	@rm -rf $(DISTDIR)
-	@mkdir -p $(DISTDIR)
-	@cp $(OUT)/bomb $(DISTDIR)/
-	@cp src/bomb.c $(DISTDIR)/
-	@cp docs/README.md docs/PRIMER.md $(DISTDIR)/
+	@rm -rf $(DISTDIR) && mkdir -p $(DISTDIR)
+	@cp $(OUT)/bomb $(OUT)/bomb.c docs/README.md docs/PRIMER.md $(DISTDIR)/
 	@for f in $(FORBIDDEN); do \
 	    if [ -e "$(DISTDIR)/$$f" ]; then \
 	        echo "FAIL: forbidden file in package: $$f"; exit 1; \
 	    fi; \
 	done
-	@echo "$(DISTDIR) ready:"
-	@ls -1 $(DISTDIR)
+	@echo "$(DISTDIR) ready:" && ls -1 $(DISTDIR)
 
 verify:
-	@bash tools/verify.sh $(FROM) $(TO)
+	$(PYTHON) tools/verify_bank.py --seeds $(SEEDS) \
+	    $(foreach k,$(VKIND),--kind $(k))
+	bash tools/runtime_check.sh
+	bash tools/parity.sh $(SEEDS)
+
+parity:
+	bash tools/parity.sh $(SEEDS)
+
+selftest:
+	bash tools/server_selftest.sh
+
+# ---- calibration (AC-05) ---------------------------------------------------
+# ref/ holds the original self-study bomb and our reconstruction of it. Both
+# are git-ignored: the reconstruction contains the original's answers.
+
+CALIB_SRCS  := bomb.c phases.c support.c support.h phases.h
+CALIB_FUNCS := main phase_1 phase_2 phase_3 func4 phase_4 phase_5 phase_6 \
+               fun7 secret_phase sig_handler invalid_phase string_length \
+               strings_not_equal initialize_bomb initialize_bomb_solve \
+               blank_line skip explode_bomb read_six_numbers read_line \
+               phase_defused
+
+calib:
+	@test -f ref/calib/phases.c -a -f ref/cmu-selfstudy/bomb/bomb || \
+	    { echo "calib: ref/ not present (dev machine only)"; exit 1; }
+	@rm -rf build/calib && mkdir -p build/calib
+	@cd ref/calib && cp $(CALIB_SRCS) ../../build/calib/
+	@echo '{"canary": ["phase_5", "phase_defused"]}' > build/calib/manifest.json
+	$(PYTHON) tools/buildbomb.py --src build/calib --image $(IMAGE)
+	$(PYTHON) tools/asmdiff.py --data ref/cmu-selfstudy/bomb/bomb \
+	    build/calib/bomb $(CALIB_FUNCS)
 
 clean:
-	rm -f bomb bomb.log
+	rm -f bomb
 
 distclean: clean
-	rm -rf dist build src/bombdata.h src/bombdata.c tools/__pycache__
+	rm -rf dist build tools/__pycache__ bank/__pycache__ bank/drills/__pycache__

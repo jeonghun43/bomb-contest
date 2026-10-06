@@ -1,5 +1,5 @@
 [Unit]
-Description=Bomb Lab scheduler tick (locks/unlocks accounts for contest state)
+Description=Bomb Lab scheduler tick (opens/closes logins for the operating window)
 
 [Service]
 Type=oneshot

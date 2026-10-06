@@ -1,10 +1,10 @@
 """
-config.py - Load the contest configuration and compute the current phase.
+config.py - Load the practice-server configuration.
 
-The effective contest state comes from the configured times, but an operator
-override stored in the database (settings table) always wins. That lets
-`bomblabctl start/freeze/stop/auto` take effect immediately regardless of the
-clock.
+The server is OPEN during its operating window (by default the two weeks
+between the Bomb Lab lecture and the course assignment) and CLOSED outside
+it. With no window configured it is always open. An operator override stored
+in the database (`bomblabctl open|close|auto`) always wins.
 """
 
 import configparser
@@ -15,11 +15,8 @@ import os
 
 DEFAULT_PATH = "/etc/bomblab/bomblab.ini"
 
-# Contest states
-BEFORE = "before"   # not started: accounts locked, bombs refuse to run
-RUNNING = "running"  # live: events scored
-FROZEN = "frozen"   # live, but public board is pinned at freeze time
-ENDED = "ended"     # over: new logins blocked, late events not scored
+OPEN = "open"
+CLOSED = "closed"
 
 
 def now():
@@ -36,17 +33,16 @@ class Config:
     def __init__(self, path=None):
         self.path = path or os.environ.get("BOMBLAB_CONFIG", DEFAULT_PATH)
         cp = configparser.ConfigParser()
-        if not cp.read(self.path):
+        if not cp.read(self.path, encoding="utf-8"):
             raise FileNotFoundError("config not found: %s" % self.path)
         self._cp = cp
 
-        self.name = cp.get("contest", "name", fallback="Bomb Lab Contest")
-        self.start_at = _parse_time(cp.get("contest", "start_at", fallback=""))
-        self.freeze_at = _parse_time(cp.get("contest", "freeze_at", fallback=""))
-        self.end_at = _parse_time(cp.get("contest", "end_at", fallback=""))
-        self.kick_on_end = cp.getboolean("contest", "kick_on_end", fallback=False)
+        self.name = cp.get("site", "name", fallback="Bomb Lab Practice")
+        self.start_at = _parse_time(cp.get("window", "start_at", fallback=""))
+        self.end_at = _parse_time(cp.get("window", "end_at", fallback=""))
 
-        pts = cp.get("scoring", "phase_points", fallback="10,10,10,10,10,10")
+        # Original CMU assignment: phases 1-4 ten points, 5-6 fifteen.
+        pts = cp.get("scoring", "phase_points", fallback="10,10,10,10,15,15")
         self.phase_points = [int(x) for x in pts.split(",")]
         self.secret_points = cp.getint("scoring", "secret_points", fallback=10)
         self.explosion_penalty = cp.getfloat("scoring", "explosion_penalty",
@@ -57,9 +53,15 @@ class Config:
         self.socket = cp.get("server", "socket",
                              fallback="/run/bomblab/report.sock")
         self.db = cp.get("server", "db", fallback="/var/lib/bomblab/bomblab.db")
+        self.bombs_dir = cp.get("server", "bombs_dir",
+                                fallback="/var/lib/bomblab/bombs")
         self.listen = cp.get("server", "listen", fallback="127.0.0.1:8080")
         self.events_per_minute = cp.getint("server", "events_per_minute",
                                            fallback=60)
+
+        self.reissue_per_hour = cp.getint("practice", "reissue_per_hour",
+                                          fallback=30)
+        self.image = cp.get("practice", "image", fallback="bomblab-gcc48")
 
         self.admin_user = cp.get("admin", "user", fallback="admin")
         self.admin_hash = cp.get("admin", "password_hash", fallback="")
@@ -68,21 +70,19 @@ class Config:
         host, _, port = self.listen.partition(":")
         return host, int(port)
 
+    def has_window(self):
+        return bool(self.start_at or self.end_at)
+
     def state(self, override=None, at=None):
-        """
-        Effective state. `override` is one of BEFORE/RUNNING/FROZEN/ENDED or
-        "auto"/None to follow the clock. `at` defaults to now().
-        """
-        if override and override != "auto":
+        """OPEN or CLOSED. `override` is OPEN/CLOSED, or 'auto'/None."""
+        if override in (OPEN, CLOSED):
             return override
         t = at or now()
         if self.start_at and t < self.start_at:
-            return BEFORE
+            return CLOSED
         if self.end_at and t >= self.end_at:
-            return ENDED
-        if self.freeze_at and t >= self.freeze_at:
-            return FROZEN
-        return RUNNING
+            return CLOSED
+        return OPEN
 
     def check_admin_password(self, password):
         """Constant-time check against a stored 'sha256$salt$hex' hash."""

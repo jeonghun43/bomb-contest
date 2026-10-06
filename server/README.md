@@ -1,145 +1,333 @@
-# Bomb Lab 대회 서버 — 운영 매뉴얼
+# Bomb Lab 연습 서버 — 운영자 매뉴얼
 
-참가자는 SSH로 서버에 접속해 자기 계정의 폭탄을 해체하고, 모든 해제·폭발은 서버 DB에 기록되어 웹 리더보드에 실시간으로 나타납니다. 이 문서는 서버를 세우고 대회를 운영하는 절차입니다.
+학생은 SSH로 서버에 접속해 자기 계정의 폭탄을 해체합니다. 모든 해제·폭발은 서버 DB에 기록되어 웹 스코어보드에 실시간으로 나타납니다. 이 문서 하나로 **배포 → 설정 → 학생 등록 → 2주 운영 → 상황 대처 → 종료**까지 다룹니다.
 
-구현·검증 세부는 [specs/002-contest-server](../specs/002-contest-server/spec.md)를 보세요.
+- 설계·검증 세부: [specs/002-contest-server](../specs/002-contest-server/spec.md) (서버), [specs/003-practice-bank](../specs/003-practice-bank/spec.md) (문제은행)
+- 학생용 안내: [docs/README.md](../docs/README.md), 드릴 안내: [docs/DRILLS.md](../docs/DRILLS.md)
 
 ---
 
-## 1. 구성 요소
+## 1. 구성 요소 한눈에
 
-| 구성 | 사용자 | 역할 |
+| 구성 | 실행 사용자 | 역할 |
 |---|---|---|
-| `bomblab-reportd` | `bomblab` | Unix 소켓 `/run/bomblab/report.sock` 수신. 접속 uid로 참가자를 식별하고, 해제 주장은 입력을 **다시 채점**해 인정 |
-| `bomblab-web` | `bomblab` | `127.0.0.1:8080` — 공개 리더보드 `/`, 관리자 `/admin` |
-| `bomblab-scheduler.timer` | root | 15초마다 대회 상태에 맞춰 계정 잠금/해제 |
-| `nginx` | — | 80/443을 web으로 프록시 |
-| `bomblabctl` | root | 운영자 CLI |
-| `/var/lib/bomblab/bomblab.db` | `bomblab` | SQLite. 참가자·이벤트·설정 |
+| `bomblab-reportd` | `bomblab` | Unix 소켓 `/run/bomblab/report.sock`. 접속 uid로 학생 식별, 해제 주장을 **재채점**, 해설·힌트 전달, 재발급 요청 접수 |
+| `bomblab-builder` | root | 학생의 재발급 요청(`bomblab new ...`)을 받아 폭탄을 빌드하고 홈에 설치 |
+| `bomblab-web` | `bomblab` | `127.0.0.1:8080` — 공개 스코어보드 `/`, 관리자 `/admin` |
+| `bomblab-scheduler.timer` | root | 15초마다 운영 기간에 맞춰 로그인 열기/닫기 |
+| `nginx` | — | 80/443 → web 프록시 |
+| `bomblabctl` | root | 운영자 CLI (아래 명령어 표) |
+| `bomblab` | 학생 | 학생 CLI (`/usr/local/bin/bomblab`) |
+| Docker 이미지 `bomblab-gcc48` | — | 원본 CMU 폭탄과 같은 컴파일러(GCC 4.8.1). 모든 폭탄은 여기서 빌드 |
+| `/var/lib/bomblab/bomblab.db` | `bomblab` | SQLite. 학생·폭탄·이벤트·힌트 열람·재발급 요청 |
+| `/var/lib/bomblab/bombs/<bomb_id>/` | `bomblab` (0700) | 폭탄별 소스·정답·해설·힌트. 학생은 읽을 수 없음 |
 
-**보안 골자**
-- 신원은 커널이 보증하는 접속 uid(`SO_PEERCRED`)로 정해집니다. 폭탄에 토큰이 없고, 남의 이름으로 기록할 수 없습니다.
-- 폭탄에는 시드가 없고 무작위 `BOMB_ID`만 있습니다. 시드·정답은 root만 읽는 DB에 있습니다.
-- 서버는 폭탄의 "해제했다"는 말을 믿지 않고, 보고된 입력을 참가자 시드로 재채점해 통과할 때만 인정합니다. 위조 시도는 `invalid`로 남고 폭발로 집계됩니다.
+**학생 한 명이 받는 폭탄** (홈 디렉터리):
 
-## 2. 서버 준비
+| 위치 | 종류 | 점수 | 해설·힌트 | 재발급 |
+|---|---|---|---|---|
+| `~/bomb` | 과제형 (CMU 구조) | ✅ 원본 과제 배점 | ❌ | 운영자만 (`reissue`) |
+| `~/practice` | 연습 (CMU 구조) | ❌ | ✅ | 학생이 `bomblab new practice` |
+| `~/drills/d0` ~ `d9` | 개념 드릴 10개 | ❌ (진도표만) | ✅ | 학생이 `bomblab new d3` |
 
-- Ubuntu 22.04 또는 24.04, 2 vCPU / 4GB 이상 (30명 기준).
-- 공인 IP로 열 경우 방화벽에서 22(SSH)·80(·443)만 열고, `fail2ban` 설치를 권장합니다.
-- 이 저장소를 서버에 복사(git clone 또는 scp)합니다.
+**보안 골자**: 신원은 커널이 보증하는 접속 uid(`SO_PEERCRED`)로 정해져 위조 불가. 폭탄에는 시드가 없고 무작위 `BOMB_ID`만 있음. 서버는 폭탄의 "해제했다"는 말을 믿지 않고 입력을 재채점해 통과할 때만 인정(위조 시도는 `invalid` → 폭발로 집계). 재발급되면 이전 폭탄의 보고는 거부.
 
-## 3. 설치
+---
+
+## 2. AWS EC2 배포
+
+### 2.1 ⚠️ 인스턴스는 반드시 x86-64
+
+학생이 서버 안에서 폭탄을 실행하므로 **서버 CPU = 폭탄 아키텍처**입니다.
+
+| | 인스턴스 | 비고 |
+|---|---|---|
+| ✅ | **t3.medium** (Intel), t3a.medium (AMD) | x86-64 |
+| ❌ | t4g·m6g·c7g 등 (Graviton) | ARM → 폭탄이 실행되지 않음 |
+
+30명 기준 **t3.medium (2 vCPU / 4GB)**, 디스크 **20GB 이상** 권장(Docker 이미지와 폭탄 빌드 디렉터리).
+
+### 2.2 인스턴스 생성
+
+- 리전 **서울(ap-northeast-2)**, AMI **Ubuntu 24.04 LTS (x86)**, 타입 **t3.medium**
+- 키 페어 생성 → `bomblab-key.pem` 다운로드 (관리자 접속용)
+- 보안 그룹 인바운드: **22 / 80 / 443** 모두 `0.0.0.0/0` (8080은 열지 말 것)
+
+### 2.3 퍼블릭 IP·DNS
+
+- 인스턴스의 **퍼블릭 IPv4**를 가비아 A 레코드 `bomb` → 그 IP 로 등록.
+- 재부팅은 IP 유지, **Stop→Start는 IP가 바뀝니다**(그때 A 레코드 수정). 2주 동안 켜 둘 것이므로 **탄력적 IP**를 쓰는 편이 편합니다.
+
+### 2.4 접속 & 저장소
 
 ```bash
-sudo ./server/install.sh
+ssh -i bomblab-key.pem ubuntu@bomb.doublejeong.com     # (또는 IP)
+# 비공개 저장소 클론 (fine-grained 토큰: Contents=Read 권한 필요)
+git clone https://github.com/jeonghun43/bomb-contest.git
+cd bomb-contest
 ```
 
-패키지 설치 → `bomblab` 계정·`contestants` 그룹 → `/opt/bomblab` 배치 → systemd 유닛 → nginx → 참가자 격리(SSH 포워딩 차단, 사용자 자원 제한, `/home` 0700, `/proc hidepid`)까지 수행하고 자체 점검을 출력합니다. 재실행해도 안전합니다.
-
-HTTPS가 필요하면 도메인 연결 후:
+### 2.5 설치
 
 ```bash
-sudo certbot --nginx -d bomb.example.com
+sudo bash server/install.sh
 ```
 
-## 4. 설정
+패키지(Docker 포함) → **GCC 4.8.1 툴체인 이미지 빌드**(처음 한 번, 몇 분) → `bomblab` 계정·`contestants` 그룹 → `/opt/bomblab` 배치(원본 폭탄이 든 `ref/`는 복사하지 않음) → 학생 CLI 설치 → systemd 4종 → nginx → 학생 격리(SSH 포워딩 차단·**학생 그룹만 비밀번호 로그인**·자원 제한·`/home` 0700·`/proc hidepid`) → fail2ban 까지 수행하고 재시작합니다. **재실행 = 재배포**(코드 업데이트 후 `git pull` → `sudo bash server/install.sh`).
+
+**툴체인 이미지는 꼭 백업하세요.** 이미지는 지원이 끝난 Ubuntu 12.04 보관소에서 패키지를 받아 만듭니다. 보관소가 사라지면 다시 만들 수 없습니다.
+
+```bash
+sudo docker save bomblab-gcc48 | gzip > ~/bomblab-gcc48.tar.gz    # 약 100MB
+scp -i bomblab-key.pem ubuntu@bomb.doublejeong.com:~/bomblab-gcc48.tar.gz .
+```
+
+저장소 옆(`../bomblab-gcc48.tar.gz`)이나 `/opt/bomblab-gcc48.tar.gz`에 두면 `install.sh`가 빌드 대신 불러옵니다.
+
+### 2.6 시간대 (중요)
+
+EC2는 기본 UTC라 시각이 한국시간과 9시간 어긋납니다. 서울로 바꾸세요:
+```bash
+sudo timedatectl set-timezone Asia/Seoul
+sudo systemctl restart bomblab-web bomblab-reportd
+```
+
+### 2.7 HTTPS
+
+```bash
+sudo certbot --nginx -d bomb.doublejeong.com
+```
+이메일 입력 → 약관 `Y` → 리다이렉트 선택. 이미 인증서가 있어 물으면 **1(Reinstall)** 선택. 확인: `sudo ss -ltnp | grep ':443'`.
+
+---
+
+## 3. 노트북(WSL2)에서 운영하기
+
+학생이 같은 네트워크(강의실·연구실)에 있을 때 쓸 수 있습니다. 외부에서 접속해야 하면 EC2를 권장합니다.
+
+1. **Ubuntu 22.04/24.04 on WSL2**에서 **systemd를 켭니다.** `/etc/wsl.conf`에 아래를 넣고, PowerShell에서 `wsl --shutdown` 후 다시 엽니다.
+   ```ini
+   [boot]
+   systemd=true
+   ```
+2. **SSH 서버**: `sudo apt install openssh-server && sudo systemctl enable --now ssh`
+3. **네트워크**: WSL2 기본(NAT) 모드에서는 다른 PC가 WSL에 바로 접속할 수 없습니다. Windows 11이면 `%UserProfile%\.wslconfig`에서 미러 모드를 켜고(`[wsl2]` 아래 `networkingMode=mirrored`), Windows 방화벽에서 22·80번 인바운드를 허용하세요. 정확한 설정은 Microsoft의 "WSL 네트워킹" 문서를 확인하세요.
+4. 2장의 설치(`sudo bash server/install.sh`)를 그대로 실행합니다. Docker Desktop을 쓰고 있다면 그 Docker를 그대로 씁니다.
+5. **2주 동안 노트북을 켜 두어야 합니다.** 절전·최대 절전을 끄고, 전원을 연결해 두세요. WSL은 마지막 터미널을 닫으면 잠시 뒤 멈출 수 있으니, 운영 중에는 WSL 터미널 하나를 열어 두는 것이 안전합니다.
+6. `public_host`에는 학생이 접속할 노트북의 IP(또는 이름)를 적습니다.
+
+---
+
+## 4. 설정 `/etc/bomblab/bomblab.ini`
 
 ```bash
 sudo nano /etc/bomblab/bomblab.ini
+sudo systemctl restart bomblab-reportd bomblab-web bomblab-builder   # 바꾼 뒤 재시작
 ```
 
-- `[contest]` 시각: `start_at` / `freeze_at` / `end_at` (ISO 8601 + 타임존). 시각에 따라 자동 전환됩니다.
-- `[scoring]`: 단계별 점수·secret 점수·폭발 감점. 기본은 각 10점·secret 10점·폭발 −0.5(상한 −20). **원본 CMU 배점(10,10,10,10,15,15)** 은 파일 주석에 병기되어 있으니 한 줄만 바꾸면 됩니다.
-- `[server] public_host`: 참가자 카드·리더보드 링크에 쓰일 주소.
-- `[admin]`: 관리자 화면 로그인. 해시 생성:
+- `[window]` `start_at`/`end_at` — 운영 기간(ISO 8601 + `+09:00`). 교육 직후부터 과제 공개 전까지 **2주**. 기간 밖에는 로그인·기록이 막힙니다. 둘 다 비우면 상시 개방.
+- `[scoring]` — 과제형 폭탄 배점. 기본값은 원본 CMU 과제와 같음: `10,10,10,10,15,15`, 숨은 단계 +10, 폭발 -0.5(상한 20).
+- `[practice] reissue_per_hour` — 학생이 연습·드릴을 다시 받을 수 있는 시간당 횟수(기본 30).
+- `[server] public_host` — 카드·스코어보드 링크 주소.
+- `[admin]` — `/admin` 로그인. 해시: `sudo bomblabctl hash-password` 출력을 `password_hash`에 붙여넣기.
 
-```bash
-sudo bomblabctl hash-password      # 비밀번호 입력 → sha256$... 출력
-# 출력값을 bomblab.ini 의 password_hash 에 붙여넣기
-```
+---
 
-설정을 바꾼 뒤 데몬 재시작:
+## 5. 학생 계정 만들기 & 추가
 
-```bash
-sudo systemctl restart bomblab-reportd bomblab-web
-```
+### 5.1 최초 생성
 
-## 5. 참가자 계정 만들기
-
-명단 CSV를 준비합니다. 한 줄에 한 명, 닉네임만 있으면 됩니다(아이디를 지정하려면 둘째 열에).
+명단 CSV(한 줄에 한 명, 이름만 있으면 됨. 이름은 운영자만 보는 라벨이고 공개 화면엔 bomb 번호로 나옴):
 
 ```csv
-# nickname[,username]
+# 이름(운영자 확인용)[,username]
+홍길동
 김철수
-이영희
-박민수,bomb_park
+이영희,bomb_lee
 ```
 
 ```bash
 sudo bomblabctl provision roster.csv
 ```
 
-각 참가자에 대해 리눅스 계정(`bomb01`, `bomb02`, …)·무작위 비밀번호·전용 폭탄을 만들어 `~/bomb/`에 설치하고 DB에 등록합니다. 계정은 **잠긴 상태**로 생성됩니다. 결과:
+학생마다 계정(`bomb01`, `bomb02`…)·무작위 비밀번호를 만들고 **폭탄 12개**(과제형 1 + 연습 1 + 드릴 10)를 빌드해 홈에 설치합니다. 30명이면 폭탄 360개라 몇 분 걸립니다. 운영 기간 전이면 계정은 **잠긴 상태**로 만들어지고, 기간이 시작되면 자동으로 열립니다. 산출물:
 
-- `credentials.csv` (0600) — 닉네임·아이디·비밀번호·접속 명령
-- `cards.html` — 인쇄용 접속 정보 카드 (한 명당 한 장)
+- `credentials.csv` (아이디·비밀번호·접속 명령) / `cards.html` (인쇄용 카드) — sudo 실행 사용자 소유로 생성되니 바로 내려받아 배포:
+  ```bash
+  # 로컬에서
+  scp -i bomblab-key.pem ubuntu@bomb.doublejeong.com:~/bomb-contest/cards.html .
+  ```
 
-`cards.html`을 인쇄해 나눠 주세요. **지각자**는 명단에 줄을 추가하고 다시 실행하면 기존 인원은 건너뛰고 새 인원만 생성됩니다.
+### 5.2 운영 중 학생 추가
 
-## 6. 리허설 (대회 전 필수)
-
-빌드·서버 로직은 자동 검증되어 있습니다(아래 8절). 대회 전에는 **실제 접속 흐름**을 리허설하세요.
-
-1. 가짜 명단 2~3명으로 `provision`.
-2. 시작 전 상태에서 SSH 로그인 → 거부되는지 확인.
-3. `sudo bomblabctl start` → 로그인되고 `~/bomb/./bomb` 실행 → 리더보드(브라우저)에 반영되는지 확인.
-4. 일부러 오답 → 폭발이 리더보드 폭발 수에 반영되는지.
-5. `sudo bomblabctl freeze` → 공개 리더보드가 고정되고 `/admin` 은 계속 갱신되는지.
-6. 격리 확인 (참가자 계정에서): `ls /home/다른계정`·`cat /var/lib/bomblab/bomblab.db`·`ls /opt/bomblab` 이 거부되고, `ps aux` 에 남의 프로세스가 안 보이고, `ssh -L` 포워딩이 거부되는지.
-7. `sudo bomblabctl export result.csv` → 순위·이벤트가 나오는지.
-8. `sudo bomblabctl purge --yes` 로 리허설 계정 정리.
-
-## 7. 대회 당일
-
-| 상황 | 명령 |
-|---|---|
-| 상태·시각 확인 | `bomblabctl status` |
-| 참가자 목록·점수·잠금상태 | `bomblabctl list` |
-| 시작(수동) | `sudo bomblabctl start` |
-| 프리즈(수동) | `sudo bomblabctl freeze` / `unfreeze` |
-| 종료(수동) | `sudo bomblabctl stop` |
-| 설정 시각 자동으로 되돌리기 | `sudo bomblabctl auto` |
-| 한 명만 잠그기/풀기 | `sudo bomblabctl lock bomb07` / `unlock bomb07` |
-| 비밀번호 재발급 | `sudo bomblabctl reset-password bomb07` |
-
-- 상태 전환은 **시각에 따라 자동**입니다. 위 `start/freeze/stop`은 그 위에 얹는 수동 덮어쓰기이며, `auto`로 언제든 자동으로 되돌립니다.
-- 15초 주기 타이머가 상태에 맞춰 계정 잠금/해제를 계속 맞춥니다. 시각을 연장하려면 `bomblab.ini`의 `end_at`을 늦추고 데몬을 재시작하면 됩니다(또는 `stop`을 안 하고 `auto` 유지).
-- 관리자 화면: 브라우저에서 `http://<서버>/admin` → 설정한 admin 계정으로 로그인. 실시간 순위 + 참가자별 입력 원문까지 봅니다.
-
-## 8. 자동 검증 (root 불필요, WSL/로컬 가능)
+**명단에 줄을 추가하고 provision을 다시 실행**하면 됩니다. 기존 학생은 건너뛰고 새 사람만 만들며, `credentials.csv`·`cards.html`에도 새 사람만 나옵니다.
 
 ```bash
-make verify FROM=1 TO=20        # 폭탄 유일해 + 서버 채점 일치 퍼징
-bash tools/server_selftest.sh   # 기록·위조 방지·프리즈·인증 등 서버 로직
+sudo bomblabctl provision roster.csv
 ```
 
-`server_selftest.sh`는 임시 소켓·DB로 reportd/web을 띄우고 현재 계정을 테스트 참가자로 등록해, 정답 채점·위조 차단(`invalid`)·다른 폭탄 ID 거부·속도 제한·관리자 인증·시작 전 차단을 확인합니다.
+> provision 도중 빌드가 실패하면 계정은 만들어졌는데 폭탄이 없는 학생이 생길 수 있습니다. 원인을 고친 뒤 `sudo bomblabctl reissue <user> <bomb|practice|d0..d9>`로 채우세요.
 
-## 9. 장애 대응
+---
 
-| 증상 | 조치 |
+## 6. 운영 명령어 레퍼런스 `bomblabctl`
+
+> 심링크(`sudo bomblabctl …`)로 쳐서 `ModuleNotFound`가 나오면 전체 경로로: `sudo /opt/bomblab/server/bin/bomblabctl …`
+
+| 명령 | 설명 |
 |---|---|
-| 참가자가 "기록 서버 연결 실패" | `systemctl status bomblab-reportd`, 필요 시 `restart`. 소켓 권한 `stat /run/bomblab/report.sock` (0666) |
-| 리더보드가 안 뜸 | `systemctl status bomblab-web nginx`, `journalctl -u bomblab-web` |
-| 점수가 이상함 | `/admin`에서 해당 참가자 이벤트 확인. `invalid`가 많으면 위조 시도 또는 잘못된 시드 매핑 |
-| 시작 시각인데 로그인 안 됨 | `bomblabctl status`로 상태 확인, `sudo bomblabctl tick` 강제 적용 |
+| `provision <roster.csv>` | 계정+비밀번호+폭탄 12개+카드 생성 (기존자 건너뜀) |
+| `reissue <user> <bomb\|practice\|d0..d9>` | 그 학생에게 새 폭탄 빌드·설치. 과제형도 가능(점수는 이전 기록 유지) |
+| `status` | 운영 상태·기간·학생 수·활성 폭탄 수 |
+| `list` | 학생별 순위·점수·폭발·해제 단계·드릴 완료 수·연습 완주 수 |
+| `open` | 지금 바로 열기 (운영 기간 무시) |
+| `close` | 지금 바로 닫기 |
+| `auto` | 수동 override 해제 → 운영 기간대로 |
+| `tick` | 현재 상태에 맞게 로그인 열기/닫기 즉시 적용 |
+| `lock <user>` / `unlock <user>` | 한 명만 잠금/해제 |
+| `reset-password <user>` | 비밀번호 재발급(출력됨) |
+| `export <out.csv>` | 점수·드릴 진도 + 전체 이벤트 CSV |
+| `purge --yes` | 모든 학생 계정·홈 삭제 (export 후에!) |
+| `hash-password` | admin 비밀번호 해시 생성 |
+
+- **상태 우선순위**: 운영 기간으로 자동 전환되며, `open/close`는 그 위에 얹는 수동 덮어쓰기. `auto`로 자동 복귀. 15초 타이머가 상태에 맞춰 계정을 계속 맞춥니다.
+- **주의**: 닫힌 상태에서 `unlock bomb01`만 하면 15초 뒤 다시 잠깁니다. 계속 열어두려면 `open`.
+
+---
+
+## 7. 2주 운영 타임라인
+
+1. **교육 전**: 설치(2장), 설정(4장), provision(5장), 리허설(9장). 카드 인쇄.
+2. **교육 당일**: 운영 기간 시작(`start_at`) 또는 `sudo bomblabctl open`. 카드 배부, D0부터 시작하도록 안내.
+3. **운영 중 (2주)**: 가끔 `list`와 `/admin`으로 진행 확인. 학생 질문은 대부분 `bomblab hint`로 해결됩니다. 매일 DB 백업을 권장:
+   ```bash
+   sudo sqlite3 /var/lib/bomblab/bomblab.db ".backup '/home/ubuntu/bomblab-$(date +%F).db'"
+   ```
+4. **과제 공개 전날**: 운영 기간 종료(`end_at`) 또는 `sudo bomblabctl close`.
+5. **정리**: `export` → 결과 저장 → `purge` → 인스턴스 Stop/Terminate.
+
+---
+
+## 8. 운영북 — 상황별 대처
+
+### 접속 문제
+
+**학생: 로그인이 `Account has expired`**
+→ 운영 기간 밖이거나 계정이 잠김. `sudo bomblabctl status` 확인 후 `sudo bomblabctl open`(전체) 또는 `unlock <user>`(한 명).
+
+**학생: `Permission denied (publickey)` (비밀번호를 못 넣음)**
+→ 학생 그룹 비밀번호 로그인이 꺼진 것. 확인·조치:
+```bash
+sudo sshd -T -C user=bomb01 | grep -i passwordauthentication   # no면 문제
+sudo systemctl reload ssh
+```
+(설정 파일 `sshd_config.d/bomblab.conf`의 `Match Group contestants → PasswordAuthentication yes` 가 적용됐는지)
+
+**학생: `Could not resolve hostname … Temporary failure in name resolution`**
+→ 그 학생이 **WSL**에서 접속 중일 가능성. WSL은 DNS가 따로 놀아 실패함. **PowerShell(윈도)·터미널(맥)** 로 접속하라고 안내. 급하면 도메인 대신 IP로.
+
+**비밀번호 분실**
+→ `sudo bomblabctl reset-password bomb07` → 출력된 새 비밀번호 전달.
+
+### 기록·스코어보드 문제
+
+**학생: "기록 서버에 연결할 수 없습니다"**
+→ reportd 확인:
+```bash
+sudo systemctl status bomblab-reportd
+sudo systemctl restart bomblab-reportd
+stat /run/bomblab/report.sock          # 0666 이어야 함
+```
+해제 기록은 유실되지 않으니 학생은 다시 실행하면 됩니다.
+
+**학생: "This bomb is not active right now: ERR bad bomb"**
+→ 그 폭탄이 재발급으로 교체된 것. 새 폭탄은 같은 위치(`~/practice`, `~/drills/dN`)에 설치되어 있으니 그것을 실행하라고 안내.
+
+**스코어보드가 안 뜸**
+```bash
+sudo systemctl status bomblab-web nginx
+sudo journalctl -u bomblab-web -n 50 --no-pager
+sudo ss -ltnp | grep -E ':(80|443|8080)'
+```
+
+**점수가 안 오르는데 학생은 풀었다고 함**
+→ `/admin`에서 그 학생 이벤트 확인. 과제형(`~/bomb`)이 아니라 연습·드릴을 풀었다면 점수에 들어가지 않는 것이 정상입니다(드릴은 진도표에 나옴). `invalid`가 찍혔으면 폭탄이 정답이 아닌 값을 보고한 것.
+
+### 재발급 문제
+
+**학생: `bomblab new ...`가 "만들지 못했습니다"**
+```bash
+sudo systemctl status bomblab-builder
+sudo journalctl -u bomblab-builder -n 50 --no-pager
+sudo docker image inspect bomblab-gcc48 >/dev/null && echo image-ok
+```
+이미지가 없으면 2.5의 백업에서 불러오거나 `sudo bash server/install.sh`로 다시 만듭니다. 실패해도 학생의 이전 폭탄은 그대로 동작합니다.
+
+**학생: `bomblab new ...`가 "한 시간에 받을 수 있는 횟수를 넘었습니다"**
+→ `[practice] reissue_per_hour`를 늘리고 reportd 재시작. 또는 운영자가 직접 `sudo bomblabctl reissue <user> d3`.
+
+### 계정·부정행위
+
+**한 명 즉시 차단**
+```bash
+sudo bomblabctl lock bomb07        # 로그인 차단
+sudo pkill -KILL -u bomb07         # 접속 중 세션도 끊기
+```
+`/admin`의 이벤트·입력 원문으로 정황 확인.
+
+### 인프라 문제
+
+**운영 기간 연장**
+→ `bomblab.ini`의 `end_at`을 늦추고 `sudo systemctl restart bomblab-reportd bomblab-web`.
+
+**서버가 재부팅됨**
+→ 서비스 4종은 자동 시작. 확인:
+```bash
+sudo bomblabctl status
+sudo systemctl is-active bomblab-reportd bomblab-web bomblab-builder
+```
+
+**Stop→Start로 IP가 바뀜**
+→ 가비아 A 레코드를 새 IP로 수정(그 외 nginx·인증서·계정·카드는 그대로).
+
+---
+
+## 9. 리허설 (운영 전 필수)
+
+```bash
+sudo bomblabctl open
+sudo bomblabctl provision test-roster.csv    # 가짜 2~3명
+# 테스트 계정으로 ssh 접속해서:
+#   cd ~/drills/d0 && ./bomb      → 폭발/해제가 스코어보드 드릴 진도에 반영되는지
+#   bomblab                       → 폭탄 목록
+#   bomblab hint d0 1 / bomblab notes d0
+#   bomblab new d0                → 새 폭탄이 설치되는지
+#   cd ~/bomb && ./bomb           → 과제형 점수표에 반영되는지
+sudo bomblabctl reissue bomb01 bomb          # 운영자 재발급
+sudo bomblabctl export test.csv               # 결과 뽑히는지
+sudo bomblabctl purge --yes                   # 리허설 계정 정리
+sudo bomblabctl auto
+```
+
+격리 확인(학생 계정에서): `ls /home/다른계정`·`cat /var/lib/bomblab/bomblab.db`·`ls /opt/bomblab`·`ls /var/lib/bomblab/bombs` 모두 거부, `ps aux`에 남 프로세스 안 보임, `ssh -L` 거부.
+
+무권한 자동 검증(로컬/WSL, Docker 필요):
+```bash
+make toolchain                   # 처음 한 번
+make verify                      # 문제은행 전체 + 런타임 + 원본 대조(ref/ 있을 때)
+bash tools/server_selftest.sh    # 기록·재채점·해설·힌트·재발급·운영 기간·인증
+```
+
+---
 
 ## 10. 종료 후
 
 ```bash
-sudo bomblabctl export result.csv     # result.csv(순위) + result.csv.events.csv(전체 이벤트)
-sudo cp /var/lib/bomblab/bomblab.db ~/bomblab-backup.db   # 원본 백업
-sudo bomblabctl purge --yes           # 계정·홈 삭제 (export/백업 후에!)
+sudo bomblabctl export result.csv                       # result.csv + result.csv.events.csv
+sudo cp /var/lib/bomblab/bomblab.db ~/bomblab-backup.db  # 원본 백업
+# 로컬로 내려받기
+scp -i bomblab-key.pem ubuntu@bomb.doublejeong.com:~/bomb-contest/result.csv .
+sudo bomblabctl purge --yes                             # 계정·홈 삭제 (백업 후!)
 ```
 
-`purge`는 모든 대회 계정과 홈 디렉터리를 지웁니다. 반드시 `export`와 DB 백업을 마친 뒤 실행하세요.
+그다음 EC2 콘솔에서 **인스턴스 Stop/Terminate**. 탄력적 IP를 썼다면 release까지. **켜둔 시간만큼 과금**되니 잊지 마세요.
