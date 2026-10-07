@@ -33,6 +33,7 @@ import pwd
 import secrets
 import subprocess
 import sys
+import time
 
 # realpath: invoked through the /usr/local/sbin/bomblabctl symlink.
 _HERE = os.path.dirname(os.path.realpath(__file__))
@@ -92,20 +93,57 @@ def read_roster(path):
     return rows
 
 
+def plan_roster(rows, users, taken=lambda name: False):
+    """Decide which roster rows need a new account.
+
+    Re-running provision with the whole roster plus a few new lines must only
+    create the new people, so a row is matched to an existing student by its
+    username when given, else by its nickname. Generated usernames take the
+    first free bombNN, skipping existing students and any system account.
+    """
+    by_name = {u["username"] for u in users}
+    by_nick = {u["nickname"]: u["username"] for u in users}
+    used = set(by_name)
+    new, skipped = [], []
+    for nickname, username in rows:
+        if username is None and nickname in by_nick:
+            skipped.append((nickname, by_nick[nickname]))
+            continue
+        if username is not None and username in by_name:
+            skipped.append((nickname, username))
+            continue
+        if username is None:
+            n = 1
+            while "bomb%02d" % n in used or taken("bomb%02d" % n):
+                n += 1
+            username = "bomb%02d" % n
+        if username in used:
+            sys.exit("명단에 같은 username이 두 번 있습니다: %s" % username)
+        used.add(username)
+        new.append((nickname, username))
+    return new, skipped
+
+
+def system_user_exists(name):
+    try:
+        pwd.getpwnam(name)
+        return True
+    except KeyError:
+        return False
+
+
 def cmd_provision(args, cfg, db):
     need_root()
     from bomblab import builder
-    existing = {u["username"] for u in db.all_users()}
-    n = len(existing)
+    new, skipped = plan_roster(read_roster(args.roster), db.all_users(),
+                               system_user_exists)
+    for nickname, username in skipped:
+        print("건너뜀 (이미 존재): %s (%s)" % (username, nickname))
     created, creds = [], []
     open_now = is_open(cfg, db)
-    for nickname, username in read_roster(args.roster):
-        if username is None:
-            n += 1
-            username = "bomb%02d" % n
-        if username in existing:
-            print("건너뜀 (이미 존재): %s" % username)
-            continue
+    for nickname, username in new:
+        if system_user_exists(username):
+            sys.exit("이미 있는 시스템 계정입니다: %s" % username)
         password = gen_password()
         run(["useradd", "-m", "-s", "/bin/bash", "-G", "contestants", username])
         set_password(username, password)
@@ -114,7 +152,6 @@ def cmd_provision(args, cfg, db):
         db.add_user(username, uid, nickname)
         db.set_locked(username, not open_now)
         created.append(db.user_by_name(username))
-        existing.add(username)
         creds.append((nickname, username, password))
         print("계정: %s (%s)" % (username, nickname))
 
@@ -149,8 +186,21 @@ def own_by_invoker(path):
             pass
 
 
-def write_credentials(cfg, creds):
+def output_paths():
+    """credentials.csv / cards.html, or a timestamped pair when an earlier
+    batch is already there, so adding a student never erases the passwords
+    handed out before."""
     cpath = os.path.join(os.getcwd(), "credentials.csv")
+    hpath = os.path.join(os.getcwd(), "cards.html")
+    if os.path.exists(cpath) or os.path.exists(hpath):
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        cpath = os.path.join(os.getcwd(), "credentials-%s.csv" % stamp)
+        hpath = os.path.join(os.getcwd(), "cards-%s.html" % stamp)
+    return cpath, hpath
+
+
+def write_credentials(cfg, creds):
+    cpath, hpath = output_paths()
     with open(cpath, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["nickname", "username", "password", "ssh", "scoreboard"])
@@ -161,7 +211,6 @@ def write_credentials(cfg, creds):
     own_by_invoker(cpath)
 
     import html
-    hpath = os.path.join(os.getcwd(), "cards.html")
     cards = "".join(
         "<div class=card><h2>{nick}</h2><table>"
         "<tr><td>접속</td><td><code>ssh {user}@{host}</code></td></tr>"

@@ -33,6 +33,13 @@ bombs_dir         = /var/lib/bomblab/bombs
 listen            = 127.0.0.1:8080
 events_per_minute = 60
 
+[fail2ban]
+# SSH 로그인을 10분에 5번 틀린 IP는 1시간 차단됩니다. 차단은 IP 단위라서,
+# 학교 와이파이처럼 여럿이 한 IP를 쓰면 모두 같이 막힙니다. 그런 IP를
+# 공백으로 구분해 적으세요 (학교 와이파이에서 `curl ifconfig.me`로 확인).
+# 바꾼 뒤: sudo bash server/install.sh  (또는 jail 파일 수정 후 fail2ban 재시작)
+ignoreip =
+
 [admin]
 # 관리자 화면(/admin) 인증. 해시 생성: bomblabctl hash-password
 user          = admin

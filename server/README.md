@@ -161,7 +161,7 @@ sudo bomblabctl provision roster.csv
 
 ### 5.2 운영 중 학생 추가
 
-**명단에 줄을 추가하고 provision을 다시 실행**하면 됩니다. 기존 학생은 건너뛰고 새 사람만 만들며, `credentials.csv`·`cards.html`에도 새 사람만 나옵니다.
+**명단에 줄을 추가하고 provision을 다시 실행**하면 됩니다. 기존 학생은 이름(username을 적었으면 username)으로 알아보고 건너뛰므로 **기존 계정·비밀번호·폭탄·점수는 그대로**이고, 새 사람만 계정과 폭탄 12개를 만듭니다. 새 번호는 비어 있는 가장 작은 `bombNN`입니다. 그래서 **기존 줄의 이름을 고치지 마세요.** 이름이 바뀌면 새 사람으로 보고 계정을 하나 더 만듭니다. 처음 만든 `credentials.csv`·`cards.html`은 덮어쓰지 않고, 새 사람 것만 `credentials-<날짜시각>.csv`·`cards-<날짜시각>.html`로 따로 만듭니다.
 
 ```bash
 sudo bomblabctl provision roster.csv
@@ -246,6 +246,15 @@ sudo systemctl reload ssh
 
 **학생: `Could not resolve hostname … Temporary failure in name resolution`**
 → 그 학생이 **WSL**에서 접속 중일 가능성. WSL은 DNS가 따로 놀아 실패함. **PowerShell(윈도)·터미널(맥)** 로 접속하라고 안내. 급하면 도메인 대신 IP로.
+
+**SSH가 `kex_exchange_identification: read: Connection reset by peer`로 끊김 (웹은 됨)**
+→ 그 IP가 fail2ban에 차단됐을 가능성. 차단은 **IP 단위**라서 학교 와이파이처럼 한 IP를 같이 쓰면, 누군가 10분에 5번 틀리는 순간 그 와이파이의 모두(운영자 포함)가 1시간 막힙니다. 다른 회선(휴대폰 핫스팟)으로 운영자 접속 후:
+```bash
+sudo fail2ban-client status sshd                               # Banned IP list 확인
+sudo fail2ban-regex /var/log/auth.log /etc/fail2ban/filter.d/sshd.conf --print-all-matched | grep <IP>   # 무엇이 실패로 세어졌나
+sudo fail2ban-client set sshd unbanip <IP>                      # 즉시 해제
+```
+학교 IP는 `bomblab.ini`의 `[fail2ban] ignoreip`에 적고 `sudo bash server/install.sh`를 다시 실행하면 예외가 됩니다. 차단 목록이 비어 있는데도 끊기면 sshd 기록(`sudo journalctl -u ssh --since today | grep <IP>`)을 확인합니다. 기록이 없으면 연결이 서버에 오기 전에 끊긴 것이니 학교망 문제입니다.
 
 **비밀번호 분실**
 → `sudo bomblabctl reset-password bomb07` → 출력된 새 비밀번호 전달.

@@ -62,15 +62,6 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 systemctl enable --now docker >/dev/null 2>&1 || true
 echo "   docker $(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ,)"
-# The box is internet-exposed with password logins, so throttle SSH brute force.
-cat > /etc/fail2ban/jail.d/bomblab.conf <<'F2B'
-[sshd]
-enabled = true
-maxretry = 5
-bantime = 1h
-findtime = 10m
-F2B
-systemctl enable --now fail2ban >/dev/null 2>&1 || true
 
 echo "== 2. 계정/그룹 =="
 id bomblab >/dev/null 2>&1 || useradd --system --home /opt/bomblab \
@@ -103,6 +94,27 @@ if [ ! -f /etc/bomblab/bomblab.ini ]; then
 else
     echo "   /etc/bomblab/bomblab.ini 유지"
 fi
+# The box is internet-exposed with password logins, so throttle SSH brute force.
+# Fail2ban bans by IP, and most students share the school's NAT address: one
+# ban would lock out everyone on campus. [fail2ban] ignoreip exempts it.
+IGNOREIP=$(python3 - <<'PY'
+import configparser
+c = configparser.ConfigParser()
+c.read("/etc/bomblab/bomblab.ini", encoding="utf-8")
+print(c.get("fail2ban", "ignoreip", fallback="").strip())
+PY
+)
+cat > /etc/fail2ban/jail.d/bomblab.conf <<F2B
+[sshd]
+enabled = true
+maxretry = 5
+bantime = 1h
+findtime = 10m
+ignoreip = 127.0.0.1/8 ::1 $IGNOREIP
+F2B
+systemctl enable fail2ban >/dev/null 2>&1 || true
+systemctl restart fail2ban >/dev/null 2>&1 || true
+echo "   fail2ban 예외 IP: ${IGNOREIP:-(없음)}"
 ln -sf "$DEST/server/bin/bomblabctl" /usr/local/sbin/bomblabctl
 chmod 0755 "$DEST/server/bin/bomblabctl"
 # Student CLI: a copy, because students cannot read /opt/bomblab.
